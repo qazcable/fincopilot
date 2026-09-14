@@ -1,0 +1,27 @@
+import "server-only";
+import { createHash, randomBytes } from "node:crypto";
+import { prisma } from "./prisma";
+
+function hashKey(key: string) {
+  return createHash("sha256").update(key).digest("hex");
+}
+
+/** Новый ключ для Apple Shortcuts. Старый перестаёт работать. В БД хранится только хеш. */
+export async function rotateApiKey(userId: string) {
+  const key = `fc_${randomBytes(24).toString("base64url")}`;
+  await prisma.user.update({
+    where: { id: userId },
+    data: { apiKeyHash: hashKey(key), apiKeyHint: key.slice(-4) },
+  });
+  return key;
+}
+
+export async function revokeApiKey(userId: string) {
+  await prisma.user.update({ where: { id: userId }, data: { apiKeyHash: null, apiKeyHint: null } });
+}
+
+export async function findUserByApiKey(authorization: string | null) {
+  const key = authorization?.match(/^Bearer\s+(fc_[\w-]{20,})$/)?.[1];
+  if (!key) return null;
+  return prisma.user.findUnique({ where: { apiKeyHash: hashKey(key) } });
+}

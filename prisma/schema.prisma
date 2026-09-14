@@ -1,0 +1,109 @@
+datasource db {
+  provider = "sqlite" // Для облачного продакшена: "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Профиль пользователя Telegram
+model User {
+  id              String        @id @default(cuid())
+  telegramId      BigInt        @unique // ID пользователя в Telegram
+  username        String?
+  firstName       String?
+  apiKey          String        @unique @default(cuid()) // Секретный токен для Apple Shortcut
+  dailyBudgetMode String        @default("AUTO") // AUTO, STRICT, RELAXED
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  accounts        Account[]
+  categories      Category[]
+  transactions    Transaction[]
+  obligations     Obligation[]
+  chatMessages    ChatMessage[]
+}
+
+// Счета пользователя
+model Account {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String        // "Карта Т-Банк", "Наличные", "Кредитка Сбер"
+  type         String        // DEBIT, CASH, SAVINGS, CREDIT
+  balance      Float         @default(0.0)
+  currency     String        @default("RUB")
+  isDefault    Boolean       @default(false) // Счет для автоматических списаний голосом
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+// Категории трат
+model Category {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String        // "Продукты", "Транспорт", "Кафе"
+  type         String        // EXPENSE, INCOME
+  icon         String?       // "shopping-cart", "coffee", "car"
+  color        String?       // HEX код цвета
+  transactions Transaction[]
+}
+
+// Транзакции
+model Transaction {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  amount         Float
+  type           String       // EXPENSE, INCOME, TRANSFER, DEBT_PAYMENT
+  date           DateTime     @default(now())
+  description    String?
+  source         String       @default("MANUAL") // MANUAL, VOICE_ACTION_BUTTON, TELEGRAM_BOT
+  
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  
+  categoryId     String?
+  category       Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  
+  obligationId   String?
+  obligation     Obligation?  @relation(fields: [obligationId], references: [id], onDelete: SetNull)
+
+  rawVoiceText   String?      // Исходный текст распознанной фразы для аудита
+  createdAt      DateTime     @default(now())
+}
+
+// Кредиты и обязательства
+model Obligation {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title           String        // "Ипотека", "Автокредит", "Рассрочка Яндекс"
+  type            String        // CONSUMER_LOAN, CREDIT_CARD, INSTALLMENT, RECURRING_BILL
+  totalAmount     Float?        // Начальное тело долга
+  remainingAmount Float         // Текущий остаток долга
+  interestRate    Float?        // Процентная ставка
+  monthlyPayment  Float         // Сумма регулярного платежа
+  dueDayOfMonth   Int           // День списания (1-31)
+  gracePeriodEnd  DateTime?     // Для кредитных карт
+  isCompleted     Boolean       @default(false)
+  
+  transactions    Transaction[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+// История диалогов с Gemini
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+}

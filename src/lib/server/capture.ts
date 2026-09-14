@@ -1,0 +1,88 @@
+import "server-only";
+import { prisma } from "./prisma";
+import { createTransaction, resolveCategoryId } from "./ledger";
+import { markPaymentPaid } from "./payments";
+import { isAiConfigured, parseWithAi } from "./ai";
+import { rateLimit } from "./rate-limit";
+import { quickParse } from "@/lib/domain/parse";
+import { addDays, dayKeyOf } from "@/lib/domain/dates";
+import { fromDb } from "@/lib/domain/money";
+import { DEBT_CATEGORY_KEY, type TxSource } from "@/lib/domain/constants";
+
+// Не больше 20 обращений к ИИ в минуту на пользователя
+const AI_LIMIT = { count: 20, windowMs: 60_000 };
+
+type CaptureUser = { id: string; timezone: string };
+
+export type CaptureResult =
+  | { ok: true; transactionId: string; linkedPaymentTitle: string | null }
+  | { ok: false; reason: "not_understood" | "ai_unavailable" | "rate_limited" };
+
+type Parsed = { amount: number; kind: "EXPENSE" | "INCOME"; categoryId: string | null; note: string };
+
+async function aiCategories(userId: string) {
+  return prisma.category.findMany({
+    where: { userId, archivedAt: null },
+    select: { id: true, name: true, kind: true },
+    orderBy: { sortOrder: "asc" },
+  });
+}
+
+/**
+ * Если трата похожа на платёж по графику (категория «Кредиты и счета», та же сумма, ±10 дней) —
+ * отмечаем платёж оплаченным, чтобы резерв не учитывал его дважды.
+ */
+async function tryLinkPayment(user: CaptureUser, parsed: Parsed, source: TxSource, rawInput: string) {
+  if (parsed.kind !== "EXPENSE" || !parsed.categoryId) return null;
+  const category = await prisma.category.findUnique({ where: { id: parsed.categoryId } });
+  if (category?.key !== DEBT_CATEGORY_KEY) return null;
+
+  const today = dayKeyOf(new Date(), user.timezone);
+  const candidates = await prisma.scheduledPayment.findMany({
+    where: { userId: user.id, status: "PENDING", dueOn: { gte: addDays(today, -10), lte: addDays(today, 10) } },
+    include: { obligation: true },
+    orderBy: { dueOn: "asc" },
+  });
+  const match = candidates.find(p => fromDb(p.amount) === parsed.amount);
+  if (!match) return null;
+
+  await markPaymentPaid(user.id, match.id);
+  const transaction = await prisma.transaction.update({
+    where: { scheduledPaymentId: match.id },
+    data: { source, rawInput: rawInput.slice(0, 500) },
+  });
+  return { transactionId: transaction.id, title: match.obligation.title };
+}
+
+async function save(user: CaptureUser, parsed: Parsed, source: TxSource, rawInput: string): Promise<CaptureResult> {
+  const linked = await tryLinkPayment(user, parsed, source, rawInput);
+  if (linked) return { ok: true, transactionId: linked.transactionId, linkedPaymentTitle: linked.title };
+
+  const transaction = await createTransaction(user.id, { ...parsed, source, rawInput });
+  return { ok: true, transactionId: transaction.id, linkedPaymentTitle: null };
+}
+
+export async function captureText(user: CaptureUser, text: string, source: TxSource): Promise<CaptureResult> {
+  const input = text.trim().slice(0, 500);
+  if (!input) return { ok: false, reason: "not_understood" };
+
+  const quick = quickParse(input);
+  if (quick) {
+    const categoryId = await resolveCategoryId(user.id, quick.kind, quick.categoryKey);
+    return save(user, { amount: quick.amount, kind: quick.kind, categoryId, note: quick.note }, source, input);
+  }
+
+  if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
+  if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
+  const parsed = await parseWithAi({ text: input }, await aiCategories(user.id));
+  if (!parsed) return { ok: false, reason: "not_understood" };
+  return save(user, parsed, source, input);
+}
+
+export async function captureAudio(user: CaptureUser, audio: Buffer, mimeType: string, source: TxSource): Promise<CaptureResult> {
+  if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
+  if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
+  const parsed = await parseWithAi({ audio, mimeType }, await aiCategories(user.id));
+  if (!parsed) return { ok: false, reason: "not_understood" };
+  return save(user, parsed, source, "🎙 голосовое сообщение");
+}

@@ -1,0 +1,111 @@
+import clsx from "clsx";
+import { TrendingDown, TrendingUp } from "lucide-react";
+import { requireUser } from "@/lib/server/auth";
+import { getStats, parseMonthParam } from "@/lib/server/queries";
+import { MonthSwitcher } from "@/components/MonthSwitcher";
+import { Donut } from "@/components/Donut";
+import { Card, CategoryIcon, EmptyState, Money, PageHeader } from "@/components/ui/primitives";
+import { daysInMonth, makeKey, parseKey } from "@/lib/domain/dates";
+
+export default async function StatsPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
+  const user = await requireUser();
+  const { year, month } = parseMonthParam((await searchParams).month, user.timezone);
+  const stats = await getStats(user, year, month);
+  const current = parseKey(stats.today);
+
+  const delta = stats.previousExpense > 0 ? Math.round(((stats.expense - stats.previousExpense) / stats.previousExpense) * 100) : null;
+  const days = daysInMonth(year, month);
+  const dayValues = Array.from({ length: days }, (_, i) => {
+    const key = makeKey(year, month, i + 1);
+    return { key, day: i + 1, value: stats.byDay[key] ?? 0, future: key > stats.today };
+  });
+  const maxDay = Math.max(1, ...dayValues.map(d => d.value));
+  const elapsedDays = year === current.year && month === current.month ? current.day : days;
+  const averagePerDay = Math.round(stats.expense / Math.max(1, elapsedDays));
+
+  return (
+    <main className="safe-top">
+      <PageHeader title="Аналитика" />
+      <div className="space-y-4 px-4">
+        <MonthSwitcher basePath="/stats" year={year} month={month} currentYear={current.year} currentMonth={current.month} />
+
+        {stats.expense === 0 ? (
+          <Card>
+            <EmptyState emoji="📊" title="Нет расходов" text="Когда появятся траты, здесь будет разбивка по категориям и дням." />
+          </Card>
+        ) : (
+          <>
+            <Card className="p-5">
+              <Donut segments={stats.categories.map(c => ({ value: c.total, color: c.category?.color ?? "#A1A1AA" }))}>
+                <span className="text-[13px] text-muted">Потрачено</span>
+                <Money value={stats.expense} className="text-[22px] font-bold tracking-tight" />
+                {delta !== null && (
+                  <span className={clsx("mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold", delta > 0 ? "bg-negative-soft text-negative" : "bg-positive-soft text-positive")}>
+                    {delta > 0 ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+                    {delta > 0 ? "+" : ""}{delta}%
+                  </span>
+                )}
+              </Donut>
+
+              <div className="mt-5 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-2xl bg-surface-2 px-2 py-3">
+                  <p className="text-[12px] text-muted">В день</p>
+                  <Money value={averagePerDay} className="mt-0.5 block text-[15px] font-semibold" />
+                </div>
+                <div className="rounded-2xl bg-surface-2 px-2 py-3">
+                  <p className="text-[12px] text-muted">Доходы</p>
+                  <Money value={stats.income} className="mt-0.5 block text-[15px] font-semibold text-positive" />
+                </div>
+                <div className="rounded-2xl bg-surface-2 px-2 py-3">
+                  <p className="text-[12px] text-muted">Прошлый</p>
+                  <Money value={stats.previousExpense} className="mt-0.5 block text-[15px] font-semibold" />
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-5">
+              <h2 className="text-[15px] font-semibold">По дням</h2>
+              <div className="mt-4 flex h-28 items-end gap-[3px]" role="img" aria-label="Расходы по дням месяца">
+                {dayValues.map(d => (
+                  <div key={d.key} className="flex h-full flex-1 flex-col justify-end">
+                    <div
+                      className={clsx("w-full rounded-t-[3px]", d.key === stats.today ? "bg-accent" : d.value > 0 ? "bg-accent/45" : d.future ? "bg-transparent" : "bg-surface-2")}
+                      style={{ height: d.value > 0 ? `${Math.max(4, (d.value / maxDay) * 100)}%` : "3px" }}
+                      title={`${d.day}`}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 flex justify-between text-[11px] text-faint tabular">
+                <span>1</span><span>{Math.ceil(days / 2)}</span><span>{days}</span>
+              </div>
+            </Card>
+
+            <Card className="p-2">
+              {stats.categories.map(entry => {
+                const share = Math.round((entry.total / stats.expense) * 100);
+                return (
+                  <div key={entry.category?.id ?? "none"} className="flex items-center gap-3 px-3 py-2.5">
+                    <CategoryIcon emoji={entry.category?.emoji ?? "💸"} color={entry.category?.color ?? "#A1A1AA"} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-[15px] font-medium">{entry.category?.name ?? "Без категории"}</span>
+                        <Money value={entry.total} className="text-[15px] font-semibold" />
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+                          <div className="h-full rounded-full" style={{ width: `${share}%`, backgroundColor: entry.category?.color ?? "#A1A1AA" }} />
+                        </div>
+                        <span className="tabular w-9 text-right text-[12px] text-muted">{share}%</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
