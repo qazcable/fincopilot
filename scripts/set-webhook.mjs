@@ -34,6 +34,8 @@ await call("setWebhook", { url, secret_token: secret, allowed_updates: ["message
 await call("setMyCommands", {
   commands: [
     { command: "today", description: "Сколько можно потратить сегодня" },
+    { command: "week", description: "Траты за 7 дней" },
+    { command: "limits", description: "Лимиты по категориям" },
     { command: "help", description: "Как записывать траты" },
   ],
 });

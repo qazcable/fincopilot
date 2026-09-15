@@ -219,56 +219,82 @@ const TIMEZONES = [
   { value: "Asia/Dubai", label: "Дубай (UTC+4)" },
 ];
 
-export function PreferencesSection({ cushion, timezone, remindersEnabled }: { cushion: number; timezone: string; remindersEnabled: boolean }) {
-  const [cushionInput, setCushionInput] = useState(minorToInput(cushion));
-  const [tz, setTz] = useState(timezone);
-  const [reminders, setReminders] = useState(remindersEnabled);
+type Preferences = {
+  cushion: number;
+  timezone: string;
+  remindersEnabled: boolean;
+  morningDigest: boolean;
+  eveningDigest: boolean;
+  weeklyDigest: boolean;
+};
+
+const NOTIFICATIONS: { key: "morningDigest" | "eveningDigest" | "weeklyDigest" | "remindersEnabled"; title: string; text: string }[] = [
+  { key: "morningDigest", title: "Утренний прогноз", text: "В 9:00 — сколько можно потратить, платежи и лимиты" },
+  { key: "eveningDigest", title: "Итоги дня", text: "В 21:00 — сколько потрачено и лимит на завтра" },
+  { key: "weeklyDigest", title: "Итоги недели", text: "По понедельникам — куда ушли деньги" },
+  { key: "remindersEnabled", title: "Напоминания о платежах", text: "За 2 дня до списания, если утренний прогноз выключен" },
+];
+
+export function PreferencesSection(initial: Preferences) {
+  const [prefs, setPrefs] = useState(initial);
+  const [cushionInput, setCushionInput] = useState(initial.cushion ? minorToInput(initial.cushion) : "");
   const [saved, setSaved] = useState(false);
   const { pending, error, setError, run } = useAction();
 
-  const timezones = TIMEZONES.some(t => t.value === timezone) ? TIMEZONES : [{ value: timezone, label: timezone }, ...TIMEZONES];
+  const timezones = TIMEZONES.some(t => t.value === prefs.timezone) ? TIMEZONES : [{ value: prefs.timezone, label: prefs.timezone }, ...TIMEZONES];
 
-  function save(next: { cushion?: string; tz?: string; reminders?: boolean }) {
-    const cushionValue = next.cushion ?? cushionInput;
-    const amount = cushionValue.trim() ? parseAmount(cushionValue) : 0;
-    if (amount === null) return setError("Проверьте сумму");
+  function save(patch: Partial<Preferences>, cushionText = cushionInput) {
+    // Пустое поле или ноль — запаса нет
+    const cushion = /^[\s0.,]*$/.test(cushionText) ? 0 : parseAmount(cushionText);
+    if (cushion === null) return setError("Проверьте сумму");
+    const next = { ...prefs, ...patch, cushion };
+    setPrefs(next);
     setSaved(false);
-    run(() => savePreferences({ cushion: amount, timezone: next.tz ?? tz, remindersEnabled: next.reminders ?? reminders }), () => setSaved(true));
+    run(() => savePreferences(next), () => setSaved(true));
   }
 
   return (
-    <section>
-      <SectionHeader title="Бюджет" />
-      <div className="divide-y divide-line overflow-hidden rounded-3xl bg-surface shadow-card">
-        <div className="px-4 py-3.5">
-          <Field label="Неприкосновенный запас, ₸" hint="Эта сумма не попадёт в лимит на день">
-            <div className="flex gap-2">
-              <input value={cushionInput} onChange={e => { setSaved(false); setCushionInput(e.target.value); }} inputMode="decimal" placeholder="0" className={clsx(inputClass, "tabular")} />
-              <Button variant="soft" className="h-12 shrink-0" loading={pending} onClick={() => save({})} aria-label="Сохранить запас">
-                {saved ? <Check className="size-5" /> : "OK"}
-              </Button>
+    <>
+      <section>
+        <SectionHeader title="Уведомления в Telegram" />
+        <div className="divide-y divide-line overflow-hidden rounded-3xl bg-surface shadow-card">
+          {NOTIFICATIONS.map(item => (
+            <div key={item.key} className="flex items-center justify-between gap-4 px-4 py-3.5">
+              <span>
+                <span className="block text-[15px] font-medium">{item.title}</span>
+                <span className="block text-[13px] leading-snug text-muted">{item.text}</span>
+              </span>
+              <Switch checked={prefs[item.key]} onChange={value => save({ [item.key]: value })} label={item.title} />
             </div>
-          </Field>
+          ))}
         </div>
-        <div className="flex items-center justify-between gap-4 px-4 py-3.5">
-          <span>
-            <span className="block text-[15px] font-medium">Напоминания о платежах</span>
-            <span className="block text-[13px] text-muted">В Telegram за 2 дня до списания</span>
-          </span>
-          <Switch checked={reminders} onChange={value => { setReminders(value); save({ reminders: value }); }} label="Напоминания о платежах" />
+      </section>
+
+      <section>
+        <SectionHeader title="Бюджет" />
+        <div className="divide-y divide-line overflow-hidden rounded-3xl bg-surface shadow-card">
+          <div className="px-4 py-3.5">
+            <Field label="Неприкосновенный запас, ₸" hint="Эта сумма не попадёт в лимит на день">
+              <div className="flex gap-2">
+                <input value={cushionInput} onChange={e => { setSaved(false); setCushionInput(e.target.value); }} inputMode="decimal" placeholder="0" className={clsx(inputClass, "tabular")} />
+                <Button variant="soft" className="h-12 shrink-0" loading={pending} onClick={() => save({})} aria-label="Сохранить запас">
+                  {saved ? <Check className="size-5" /> : "OK"}
+                </Button>
+              </div>
+            </Field>
+          </div>
+          <label className="flex items-center justify-between gap-4 px-4 py-3.5">
+            <span className="text-[15px] font-medium">Часовой пояс</span>
+            <select value={prefs.timezone} onChange={e => save({ timezone: e.target.value })} className="max-w-[55%] bg-transparent text-right text-[15px] text-muted outline-none">
+              {timezones.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </label>
         </div>
-        <label className="flex items-center justify-between gap-4 px-4 py-3.5">
-          <span className="text-[15px] font-medium">Часовой пояс</span>
-          <select value={tz} onChange={e => { setTz(e.target.value); save({ tz: e.target.value }); }} className="max-w-[55%] bg-transparent text-right text-[15px] text-muted outline-none">
-            {timezones.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </label>
-      </div>
-      {error && <p className="mt-2 text-center text-[14px] text-negative">{error}</p>}
-    </section>
+        {error && <p className="mt-2 text-center text-[14px] text-negative">{error}</p>}
+      </section>
+    </>
   );
 }
-
 // ── Быстрая команда iPhone ────────────────────────────────
 
 export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string | null; endpoint: string }) {

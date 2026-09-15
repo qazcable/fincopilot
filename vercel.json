@@ -3,8 +3,12 @@
   "regions": ["fra1"],
   "crons": [
     {
-      "path": "/api/cron/reminders",
+      "path": "/api/cron/morning",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/evening",
+      "schedule": "0 16 * * *"
     }
   ]
 }

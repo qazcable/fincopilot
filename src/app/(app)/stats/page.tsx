@@ -2,15 +2,17 @@ import clsx from "clsx";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { requireUser } from "@/lib/server/auth";
 import { getStats, parseMonthParam } from "@/lib/server/queries";
+import { getLimitsOverview } from "@/lib/server/limits";
+import { LimitsCard } from "@/components/LimitsCard";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { Donut } from "@/components/Donut";
 import { Card, CategoryIcon, EmptyState, Money, PageHeader } from "@/components/ui/primitives";
-import { daysInMonth, makeKey, parseKey } from "@/lib/domain/dates";
+import { daysInMonth, makeKey, monthName, parseKey } from "@/lib/domain/dates";
 
 export default async function StatsPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   const user = await requireUser();
   const { year, month } = parseMonthParam((await searchParams).month, user.timezone);
-  const stats = await getStats(user, year, month);
+  const [stats, limits] = await Promise.all([getStats(user, year, month), getLimitsOverview(user, year, month)]);
   const current = parseKey(stats.today);
 
   const delta = stats.previousExpense > 0 ? Math.round(((stats.expense - stats.previousExpense) / stats.previousExpense) * 100) : null;
@@ -28,6 +30,10 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
       <PageHeader title="Аналитика" />
       <div className="space-y-4 px-4">
         <MonthSwitcher basePath="/stats" year={year} month={month} currentYear={current.year} currentMonth={current.month} />
+
+        <div id="limits">
+          <LimitsCard items={limits} monthLabel={monthName(month).toLowerCase()} />
+        </div>
 
         {stats.expense === 0 ? (
           <Card>

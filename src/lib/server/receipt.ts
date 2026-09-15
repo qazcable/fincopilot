@@ -1,12 +1,13 @@
 import "server-only";
 import { prisma } from "./prisma";
 import { getBudgetSnapshot } from "./overview";
+import { evaluateCategoryLimit } from "./limits";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { formatDayKey, pluralDays } from "@/lib/domain/dates";
+import { formatLimitAlert, formatLimitReceiptLine } from "@/lib/domain/digest";
+import { escapeHtml, stripHtml } from "@/lib/domain/text";
 
-export function escapeHtml(text: string) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+export { escapeHtml };
 
 type ReceiptUser = { id: string; timezone: string; cushion: bigint };
 
@@ -27,17 +28,21 @@ export async function buildReceipt(user: ReceiptUser, transactionId: string, lin
   });
   if (!tx) return null;
 
+  // Порог лимита, достигнутый этой тратой, показываем прямо в чеке — отдельное сообщение не нужно
+  const limit = tx.kind === "EXPENSE" ? await evaluateCategoryLimit(user, tx.categoryId, tx.occurredAt) : null;
+  const limitText = limit ? (limit.newLevel ? formatLimitAlert(limit.line, limit.newLevel) : formatLimitReceiptLine(limit.line)) : null;
+
   const amount = formatMoney(fromDb(tx.amount) * (tx.kind === "EXPENSE" ? -1 : 1), { sign: true });
   const category = tx.category ? `${tx.category.emoji} ${tx.category.name}` : "Без категории";
   const lines = [
     `<b>${amount}</b> · ${escapeHtml(category)}`,
     tx.note ? escapeHtml(tx.note) : null,
     linkedPaymentTitle ? `✅ Платёж «${escapeHtml(linkedPaymentTitle)}» отмечен оплаченным` : null,
+    limitText,
     "",
     await budgetLine(user),
   ].filter(line => line !== null);
 
   const html = lines.join("\n");
-  const plain = html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-  return { html, plain, transaction: tx };
+  return { html, plain: stripHtml(html), transaction: tx };
 }

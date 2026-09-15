@@ -8,7 +8,10 @@ import { deleteTransaction } from "./ledger";
 import { markPaymentPaid } from "./payments";
 import { budgetLine, buildReceipt, escapeHtml } from "./receipt";
 import { formatMoney, fromDb } from "@/lib/domain/money";
-import { dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates";
+import { addDays, dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates";
+import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
+import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./digests";
+import { evaluateCategoryLimit } from "./limits";
 
 const MAX_VOICE_SECONDS = 60;
 
@@ -97,7 +100,11 @@ function registerHandlers(bot: Bot) {
         "",
         "Или отправьте голосовое 🎙",
         "",
-        "Команды: /today — сколько можно потратить сегодня",
+        "Каждое утро пришлю лимит на день, вечером — итоги дня, по понедельникам — итоги недели.",
+        "",
+        "/today — сколько можно потратить сегодня",
+        "/week — траты за 7 дней",
+        "/limits — лимиты по категориям",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: openAppKeyboard() }
     );
@@ -106,11 +113,26 @@ function registerHandlers(bot: Bot) {
   bot.command(["today", "budget"], async ctx => {
     const user = await userFromContext(ctx);
     if (!user) return;
-    await ctx.reply(await budgetLine(user), { parse_mode: "HTML", reply_markup: openAppKeyboard("Подробнее") });
+    const morning = await buildMorning(user);
+    await ctx.reply(morning.text, { parse_mode: "HTML", reply_markup: morning.keyboard ?? openAppKeyboard("Подробнее") });
+  });
+
+  bot.command("week", async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const today = dayKeyOf(new Date(), user.timezone);
+    const weekly = await buildWeekly(user, { from: addDays(today, -6), to: today });
+    await ctx.reply(weekly.text, { parse_mode: "HTML", reply_markup: openAppKeyboard("Аналитика") });
+  });
+
+  bot.command("limits", async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    await ctx.reply((await buildLimitsMessage(user)).text, { parse_mode: "HTML", reply_markup: openAppKeyboard("Настроить лимиты") });
   });
 
   bot.command("help", ctx => ctx.reply(
-    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.",
+    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
     { parse_mode: "HTML" }
   ));
 
@@ -194,7 +216,20 @@ function registerHandlers(bot: Bot) {
     await ctx.editMessageReplyMarkup({ reply_markup: receiptKeyboard(ctx.match[1]) });
   });
 
-  // ✅ Оплачено (из напоминания)
+  // ✅ Оплачено из утренних итогов: убираем только нажатую кнопку, текст итогов остаётся
+  bot.callbackQuery(/^q:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const payment = await markPaymentPaid(user.id, ctx.match[1]);
+    await ctx.answerCallbackQuery(payment ? `✅ ${payment.obligation.title} — оплачено` : "Уже оплачено");
+    const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard ?? [];
+    const remaining = rows
+      .map(row => row.filter(button => !("callback_data" in button) || button.callback_data !== ctx.callbackQuery.data))
+      .filter(row => row.length > 0);
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: remaining } }).catch(() => undefined);
+  });
+
+  // ✅ Оплачено (из отдельного напоминания)
   bot.callbackQuery(/^p:(\w+)$/, async ctx => {
     const user = await userFromContext(ctx);
     if (!user) return;
@@ -212,36 +247,110 @@ function registerHandlers(bot: Bot) {
   bot.catch(error => console.error("Bot error:", errorMessage(error.error)));
 }
 
-/** Одно напоминание на платёж — за 2 дня или сразу, если платёж ближе либо просрочен. Вызывается кроном. */
-export async function sendPaymentReminders() {
-  const bot = await getBot();
-  const users = await prisma.user.findMany({ where: { remindersEnabled: true } });
+/**
+ * Предупреждение о лимите категории для трат, внесённых в приложении
+ * (в боте и быстрой команде оно показывается прямо в чеке).
+ */
+export async function notifyCategoryLimit(user: { id: string; timezone: string; telegramId: bigint }, categoryId: string | null, at: Date) {
+  const result = await evaluateCategoryLimit(user, categoryId, at);
+  if (!result?.newLevel || !isBotConfigured()) return;
+  try {
+    const bot = await getBot();
+    await bot.api.sendMessage(String(user.telegramId), formatLimitAlert(result.line, result.newLevel), {
+      parse_mode: "HTML",
+      reply_markup: openAppKeyboard("Аналитика"),
+    });
+  } catch (error) {
+    console.error("Limit alert failed:", errorMessage(error));
+  }
+}
+
+type ScheduledUser = Awaited<ReturnType<typeof prisma.user.findMany>>[number];
+
+/** Отдельные напоминания о платежах — для тех, кто выключил утренние итоги */
+async function sendPaymentReminders(bot: Bot, user: ScheduledUser) {
+  const today = dayKeyOf(new Date(), user.timezone);
+  const payments = await prisma.scheduledPayment.findMany({
+    where: { userId: user.id, status: "PENDING", remindedAt: null },
+    include: { obligation: true },
+    orderBy: { dueOn: "asc" },
+  });
   let sent = 0;
+  for (const payment of payments) {
+    const diff = daysBetween(today, payment.dueOn);
+    if (diff > 2) continue;
+    const text = `${diff < 0 ? "⚠️" : "🔔"} <b>${escapeHtml(payment.obligation.title)}</b> — ${formatMoney(fromDb(payment.amount))}\nПлатёж ${relativeDays(diff)}`;
+    await bot.api.sendMessage(String(user.telegramId), text, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text("✅ Оплачено", `p:${payment.id}`),
+    });
+    await prisma.scheduledPayment.update({ where: { id: payment.id }, data: { remindedAt: new Date() } });
+    sent++;
+  }
+  return sent;
+}
+
+/**
+ * «Захват» отправки на сегодня: условное обновление даты последней отправки.
+ * Если крон запустится повторно или параллельно, второй вызов ничего не отправит.
+ */
+async function claim(userId: string, field: "lastMorningOn" | "lastEveningOn" | "lastWeeklyOn", today: string, previous: string | null) {
+  const { count } = await prisma.user.updateMany({
+    where: { id: userId, OR: [{ [field]: null }, { [field]: { not: today } }] },
+    data: { [field]: today },
+  });
+  return { claimed: count > 0, release: () => prisma.user.update({ where: { id: userId }, data: { [field]: previous } }) };
+}
+
+/** Утренние (+ недельные по понедельникам) и вечерние итоги. Вызывается кроном. */
+export async function sendScheduledDigests(slot: "morning" | "evening") {
+  const bot = await getBot();
+  const users = await prisma.user.findMany({ where: { onboardedAt: { not: null } } });
+  const result = { sent: 0, failed: 0 };
+
+  async function deliver(user: ScheduledUser, field: "lastMorningOn" | "lastEveningOn" | "lastWeeklyOn", build: () => Promise<{ text: string; keyboard?: InlineKeyboard }>, after?: () => Promise<unknown>) {
+    const today = dayKeyOf(new Date(), user.timezone);
+    const lock = await claim(user.id, field, today, user[field]);
+    if (!lock.claimed) return;
+    try {
+      const message = await build();
+      await bot.api.sendMessage(String(user.telegramId), message.text, {
+        parse_mode: "HTML",
+        reply_markup: message.keyboard ?? openAppKeyboard("Открыть FinCopilot"),
+      });
+      await after?.();
+      result.sent++;
+    } catch (error) {
+      await lock.release();
+      result.failed++;
+      console.error(`Digest ${field} failed:`, errorMessage(error));
+    }
+  }
 
   for (const user of users) {
     const today = dayKeyOf(new Date(), user.timezone);
-    const payments = await prisma.scheduledPayment.findMany({
-      where: { userId: user.id, status: "PENDING", remindedAt: null },
-      include: { obligation: true },
-      orderBy: { dueOn: "asc" },
-    });
-
-    for (const payment of payments) {
-      const diff = daysBetween(today, payment.dueOn);
-      if (diff > 2) continue;
-
-      const text = `${diff < 0 ? "⚠️" : "🔔"} <b>${escapeHtml(payment.obligation.title)}</b> — ${formatMoney(fromDb(payment.amount))}\nПлатёж ${relativeDays(diff)}`;
-      try {
-        await bot.api.sendMessage(String(user.telegramId), text, {
-          parse_mode: "HTML",
-          reply_markup: new InlineKeyboard().text("✅ Оплачено", `p:${payment.id}`),
-        });
-        await prisma.scheduledPayment.update({ where: { id: payment.id }, data: { remindedAt: new Date() } });
-        sent++;
-      } catch (error) {
-        console.error("Reminder failed:", errorMessage(error));
+    if (slot === "morning") {
+      if (user.morningDigest) {
+        let paymentIds: string[] = [];
+        await deliver(user, "lastMorningOn", async () => {
+          const morning = await buildMorning(user);
+          paymentIds = morning.paymentIds;
+          return morning;
+        }, () => prisma.scheduledPayment.updateMany({ where: { id: { in: paymentIds } }, data: { remindedAt: new Date() } }));
+      } else if (user.remindersEnabled) {
+        try {
+          result.sent += await sendPaymentReminders(bot, user);
+        } catch (error) {
+          result.failed++;
+          console.error("Reminders failed:", errorMessage(error));
+        }
       }
+      if (user.weeklyDigest && isMonday(today)) {
+        await deliver(user, "lastWeeklyOn", () => buildWeekly(user));
+      }
+    } else if (user.eveningDigest) {
+      await deliver(user, "lastEveningOn", () => buildEvening(user));
     }
   }
-  return sent;
+  return result;
 }

@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
 import { createTransaction, deleteTransaction, resolveCategoryId } from "@/lib/server/ledger";
+import { notifyCategoryLimit } from "@/lib/server/bot";
 import type { TxKind } from "@/lib/domain/constants";
 import { localDateTimeToInstant } from "@/lib/domain/dates";
 import { MAX_AMOUNT_MINOR, toDb } from "@/lib/domain/money";
@@ -38,6 +40,7 @@ export async function saveTransaction(input: TransactionInput): Promise<ActionRe
   ]);
   if (!account) return { ok: false, error: "Счёт не найден" };
 
+  let savedCategoryId: string | null = null;
   if (data.id) {
     const existing = await prisma.transaction.findFirst({ where: { id: data.id, userId: user.id } });
     if (!existing) return { ok: false, error: "Операция не найдена" };
@@ -45,7 +48,7 @@ export async function saveTransaction(input: TransactionInput): Promise<ActionRe
     // У оплаты по графику сумма и тип связаны с платежом — меняем только описание, дату, счёт и категорию
     const lockAmount = existing.scheduledPaymentId !== null;
     const kind = lockAmount ? (existing.kind as TxKind) : data.kind;
-    await prisma.transaction.update({
+    const updated = await prisma.transaction.update({
       where: { id: existing.id },
       data: {
         kind,
@@ -56,8 +59,9 @@ export async function saveTransaction(input: TransactionInput): Promise<ActionRe
         occurredAt,
       },
     });
+    savedCategoryId = updated.kind === "EXPENSE" ? updated.categoryId : null;
   } else {
-    await createTransaction(user.id, {
+    const created = await createTransaction(user.id, {
       kind: data.kind,
       amount: data.amount,
       categoryId: category?.id ?? null,
@@ -66,7 +70,11 @@ export async function saveTransaction(input: TransactionInput): Promise<ActionRe
       occurredAt,
       source: "APP",
     });
+    savedCategoryId = created.kind === "EXPENSE" ? created.categoryId : null;
   }
+
+  // Предупреждение о лимите категории уходит в бот после ответа, не задерживая интерфейс
+  if (savedCategoryId) after(() => notifyCategoryLimit(user, savedCategoryId, occurredAt));
 
   revalidatePath("/", "layout");
   return { ok: true };

@@ -23,7 +23,7 @@ export default async function SettingsPage() {
       <div className="space-y-7">
         <AccountsSection accounts={data.accounts} />
         <IncomesSection incomes={data.incomes} />
-        <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} />
+        <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} />
         <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} />
 
         {botUsername && (

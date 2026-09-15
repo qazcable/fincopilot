@@ -44,14 +44,21 @@ export async function getBudgetSnapshot(user: BudgetUser) {
     kind: p.obligation.kind,
   }));
 
+  const spentToday = fromDb(spentTodayAgg._sum.amount);
   const budget = calculateBudget({
     today,
     horizon,
     balance: budgetBalance,
     cushion: fromDb(user.cushion),
     pendingPayments,
-    spentToday: fromDb(spentTodayAgg._sum.amount),
+    spentToday,
   });
+
+  // Лимит на завтра при текущем балансе — для вечерних итогов
+  const tomorrow = addDays(today, 1);
+  const tomorrowLimit = tomorrow < horizon
+    ? calculateBudget({ today: tomorrow, horizon, balance: budgetBalance, cushion: fromDb(user.cushion), pendingPayments, spentToday: 0 }).dailyLimit
+    : 0;
 
   return {
     today,
@@ -61,6 +68,8 @@ export async function getBudgetSnapshot(user: BudgetUser) {
     totalBalance: accounts.reduce((sum, a) => sum + a.balance, 0),
     budgetBalance,
     pendingPayments,
+    spentToday,
+    tomorrowLimit,
     budget,
   };
 }

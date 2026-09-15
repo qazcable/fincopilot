@@ -3,6 +3,7 @@ import { Settings } from "lucide-react";
 import { requireUser } from "@/lib/server/auth";
 import { getHomeData } from "@/lib/server/queries";
 import { BudgetHero } from "@/components/BudgetHero";
+import { LimitWarnings } from "@/components/LimitWarnings";
 import { PaymentRow } from "@/components/PaymentRow";
 import { TransactionList } from "@/components/TransactionList";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
@@ -44,6 +45,8 @@ export default async function HomePage() {
           today={data.today}
           hasIncomeSchedule={data.hasIncomeSchedule}
         />
+
+        <LimitWarnings items={data.limitWarnings} />
 
         <div className="grid grid-cols-2 gap-3">
           <Link href="/settings" className="pressable block">

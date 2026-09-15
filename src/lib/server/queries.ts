@@ -3,6 +3,8 @@ import { prisma } from "./prisma";
 import { getAccountBalances } from "./ledger";
 import { ensureSchedule } from "./payments";
 import { getBudgetSnapshot } from "./overview";
+import { getMonthLimitLines } from "./limits";
+import { limitProgress } from "@/lib/domain/limits";
 import type { AppUser } from "./auth";
 import { addDays, addMonths, dayKeyOf, instantToLocalInput, monthRange, parseKey } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
@@ -81,8 +83,14 @@ export async function getHomeData(user: AppUser) {
   ]);
 
   const horizonPayments = snapshot.pendingPayments.filter(p => p.dueOn < snapshot.horizon);
+  const { year, month } = parseKey(snapshot.today);
+  const limitWarnings = (await getMonthLimitLines(user, year, month))
+    .map(line => ({ ...line, ...limitProgress(line.spent, line.limit) }))
+    .filter(line => line.state !== "ok")
+    .sort((a, b) => b.percent - a.percent);
   return {
     ...snapshot,
+    limitWarnings,
     hour: Number(instantToLocalInput(new Date(), user.timezone).slice(11, 13)),
     upcoming: snapshot.pendingPayments.slice(0, 4),
     horizonPaymentsCount: horizonPayments.length,
@@ -220,6 +228,9 @@ export async function getSettingsData(user: AppUser) {
     cushion: fromDb(user.cushion),
     timezone: user.timezone,
     remindersEnabled: user.remindersEnabled,
+    morningDigest: user.morningDigest,
+    eveningDigest: user.eveningDigest,
+    weeklyDigest: user.weeklyDigest,
     apiKeyHint: user.apiKeyHint,
   };
 }

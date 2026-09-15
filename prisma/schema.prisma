@@ -22,6 +22,14 @@ model User {
   // Неприкосновенный остаток, который не участвует в лимите на день
   cushion          BigInt   @default(0)
   remindersEnabled Boolean  @default(true)
+  // Итоги в боте: утром — лимит на день, вечером — итоги дня, по понедельникам — итоги недели
+  morningDigest    Boolean  @default(true)
+  eveningDigest    Boolean  @default(true)
+  weeklyDigest     Boolean  @default(true)
+  // Локальные даты (YYYY-MM-DD) последней отправки — защита от дублей при повторном запуске крона
+  lastMorningOn    String?
+  lastEveningOn    String?
+  lastWeeklyOn     String?
   onboardedAt      DateTime?
   // sha256 от ключа для Apple Shortcuts; сам ключ показывается один раз
   apiKeyHash       String?  @unique
@@ -35,6 +43,7 @@ model User {
   obligations      Obligation[]
   payments         ScheduledPayment[]
   incomes          RecurringIncome[]
+  limitAlerts      CategoryLimitAlert[]
 }
 
 model Account {
@@ -67,8 +76,11 @@ model Category {
   emoji        String
   color        String
   sortOrder    Int           @default(0)
+  // Лимит расходов на календарный месяц (только для EXPENSE); null — без лимита
+  monthlyLimit BigInt?
   archivedAt   DateTime?
   transactions Transaction[]
+  limitAlerts  CategoryLimitAlert[]
 
   @@unique([userId, key])
   @@index([userId, kind])
@@ -138,6 +150,22 @@ model ScheduledPayment {
 
   @@unique([obligationId, dueOn])
   @@index([userId, status, dueOn])
+}
+
+// Отправленные предупреждения о лимите: не больше одного на порог (80% и 100%) в месяц
+model CategoryLimitAlert {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  // YYYY-MM
+  month      String
+  // 80 | 100
+  level      Int
+  createdAt  DateTime @default(now())
+
+  @@unique([categoryId, month, level])
 }
 
 model RecurringIncome {

@@ -137,16 +137,45 @@ const preferencesSchema = z.object({
   cushion: z.number().int().min(0).max(MAX_AMOUNT_MINOR),
   timezone: z.string().refine(isValidTimeZone, "Неизвестный часовой пояс"),
   remindersEnabled: z.boolean(),
+  morningDigest: z.boolean(),
+  eveningDigest: z.boolean(),
+  weeklyDigest: z.boolean(),
 });
 
 export async function savePreferences(input: z.infer<typeof preferencesSchema>): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = preferencesSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { cushion: toDb(parsed.data.cushion), timezone: parsed.data.timezone, remindersEnabled: parsed.data.remindersEnabled },
+  const { cushion, ...flags } = parsed.data;
+  await prisma.user.update({ where: { id: user.id }, data: { ...flags, cushion: toDb(cushion) } });
+  return done();
+}
+
+const limitsSchema = z.array(z.object({
+  categoryId: z.string(),
+  limit: z.number().int().positive().max(MAX_AMOUNT_MINOR).nullable(),
+})).max(100);
+
+/** Лимиты расходов по категориям на месяц; null — снять лимит */
+export async function saveCategoryLimits(input: z.infer<typeof limitsSchema>): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = limitsSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Проверьте суммы лимитов" };
+
+  const categories = await prisma.category.findMany({
+    where: { userId: user.id, kind: "EXPENSE", id: { in: parsed.data.map(item => item.categoryId) } },
+    select: { id: true },
   });
+  const allowed = new Set(categories.map(c => c.id));
+
+  await prisma.$transaction(
+    parsed.data
+      .filter(item => allowed.has(item.categoryId))
+      .map(item => prisma.category.update({
+        where: { id: item.categoryId },
+        data: { monthlyLimit: item.limit === null ? null : toDb(item.limit) },
+      }))
+  );
   return done();
 }
 
