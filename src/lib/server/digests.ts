@@ -3,7 +3,9 @@ import { InlineKeyboard } from "grammy";
 import { prisma } from "./prisma";
 import { getBudgetSnapshot } from "./overview";
 import { getMonthLimitLines } from "./limits";
-import { addDays, dayKeyOf, daysBetween, parseKey, startOfDayInstant, type DayKey } from "@/lib/domain/dates";
+import { addDays, dayKeyOf, daysBetween, formatDayKey, parseKey, startOfDayInstant, type DayKey } from "@/lib/domain/dates";
+import { getForecast } from "./forecast";
+import { forecastHeadline } from "@/lib/domain/forecast";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { formatEvening, formatLimits, formatMorning, formatWeekly, previousWeek, type CategoryAmount } from "@/lib/domain/digest";
 
@@ -43,7 +45,7 @@ export async function buildMorning(user: DigestUser): Promise<BotMessage & { pay
   const { year, month } = parseKey(snapshot.today);
   const due = snapshot.pendingPayments.filter(p => daysBetween(snapshot.today, p.dueOn) <= REMINDER_DAYS);
 
-  const text = formatMorning({
+  let text = formatMorning({
     today: snapshot.today,
     horizon: snapshot.horizon,
     hasIncomeSchedule: snapshot.hasIncomeSchedule,
@@ -51,6 +53,13 @@ export async function buildMorning(user: DigestUser): Promise<BotMessage & { pay
     duePayments: due,
     limits: await getMonthLimitLines(user, year, month),
   });
+
+  // Кассовый разрыв в ближайшую неделю — предупреждаем заранее
+  const forecast = await getForecast(user, 14);
+  if (forecast.gapStart && forecast.gapStart <= addDays(snapshot.today, 7)) {
+    const headline = forecastHeadline(forecast, snapshot.today, formatMoney, day => formatDayKey(day, snapshot.today).toLowerCase());
+    text += `\n\n⚠️ <b>${headline.title}</b>\n${headline.text}`;
+  }
 
   const keyboard = new InlineKeyboard();
   for (const payment of due) keyboard.text(`✅ ${payment.title} — ${formatMoney(payment.amount)}`, `q:${payment.id}`).row();

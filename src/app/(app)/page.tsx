@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { ChevronRight, Settings, Sparkles } from "lucide-react";
+import clsx from "clsx";
+import { AlertTriangle, ChevronRight, Settings, Sparkles, TrendingUp } from "lucide-react";
+import { getForecast } from "@/lib/server/forecast";
+import { forecastHeadline } from "@/lib/domain/forecast";
+import { formatMoney } from "@/lib/domain/money";
 import { requireUser } from "@/lib/server/auth";
 import { getHomeData } from "@/lib/server/queries";
 import { BudgetHero } from "@/components/BudgetHero";
@@ -20,7 +24,8 @@ function greeting(hour: number) {
 
 export default async function HomePage() {
   const user = await requireUser();
-  const data = await getHomeData(user);
+  const [data, forecast] = await Promise.all([getHomeData(user), getForecast(user)]);
+  const headline = forecastHeadline(forecast, forecast.today, formatMoney, day => formatDayKey(day));
   const weekday = weekdayOf(data.today);
 
   return (
@@ -46,6 +51,22 @@ export default async function HomePage() {
           today={data.today}
           hasIncomeSchedule={data.hasIncomeSchedule}
         />
+
+        <Link href="/forecast" className="pressable block">
+          <Card className="flex items-center gap-3 p-4">
+            <span className={clsx(
+              "flex size-11 shrink-0 items-center justify-center rounded-2xl",
+              headline.tone === "good" ? "bg-positive-soft text-positive" : headline.tone === "warning" ? "bg-warning-soft text-warning" : "bg-negative-soft text-negative"
+            )}>
+              {headline.tone === "good" ? <TrendingUp className="size-5" /> : <AlertTriangle className="size-5" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold">{headline.title}</span>
+              <span className="block text-[13px] leading-snug text-muted">{headline.text}</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-faint" />
+          </Card>
+        </Link>
 
         <LimitWarnings items={data.limitWarnings} />
 

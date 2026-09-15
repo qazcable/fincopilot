@@ -6,6 +6,8 @@ import { askAdvisorAi, isAiConfigured, type AdvisorTurn } from "./ai";
 import { addMonths, dayKeyOf, daysInMonth, formatDayKey, monthName, monthRange, parseKey, startOfDayInstant, weekdayOf } from "@/lib/domain/dates";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { simulatePayoff } from "@/lib/domain/payoff";
+import { forecastHeadline } from "@/lib/domain/forecast";
+import { getForecast } from "./forecast";
 import { ACCOUNT_KINDS, OBLIGATION_KINDS, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
 
 type AdvisorUser = { id: string; timezone: string; cushion: bigint; firstName: string | null };
@@ -127,6 +129,11 @@ export async function buildAdvisorContext(user: AdvisorUser) {
   if (upcoming.length > 0) {
     lines.push(`Платежи до следующего дохода: ${upcoming.map(p => `${p.title} ${money(p.amount)} (${formatDayKey(p.dueOn)})`).join("; ")}`);
   }
+
+  const forecast = await getForecast(user);
+  const headline = forecastHeadline(forecast, today, money, day => formatDayKey(day));
+  lines.push("", "ПРОГНОЗ ОСТАТКА НА 45 ДНЕЙ (счета в лимите, без целей)");
+  lines.push(`${headline.title}. ${headline.text} Обычные траты в прогнозе: ${money(forecast.dailySpend)} в день.${forecast.incomeUnknown ? " Сумма зарплаты неизвестна — доход в прогнозе не учтён." : ""}`);
 
   if (snapshot.goals.length > 0) {
     lines.push("", "ЦЕЛИ НАКОПЛЕНИЙ");
