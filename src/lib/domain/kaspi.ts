@@ -62,7 +62,8 @@ export function toLines(items: TextItem[]) {
 
 export function isKaspiStatement(pages: TextItem[][]) {
   const text = pages.slice(0, 3).flat().map(i => i.text).join(" ");
-  return /Kaspi/i.test(text) && /ВЫПИСКА/.test(text) && /Дата/.test(text) && /Операция/.test(text);
+  // «Выписка по кредитам» похожа по вёрстке, но это договоры, а не операции по карте
+  return /Kaspi/i.test(text) && /ВЫПИСКА/.test(text) && /Дата/.test(text) && /Операция/.test(text) && !/по кредитам за период/i.test(text);
 }
 
 export function parseKaspiStatement(pages: TextItem[][]): KaspiStatement {

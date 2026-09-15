@@ -141,6 +141,72 @@ export async function askAdvisorAi(context: string, history: AdvisorTurn[], ques
   return response.text?.trim() || null;
 }
 
+const loansScreenshotResult = z.object({
+  isLoanScreen: z.boolean(),
+  loans: z.array(z.object({ title: z.string(), remaining: z.number(), monthlyPayment: z.number().nullable(), nextPaymentDay: z.number().nullable() })),
+});
+
+export type ScreenshotLoan = { title: string; remaining: number; monthlyPayment: number | null; nextPaymentDay: number | null };
+
+/** Скриншот списка кредитов из приложения банка: название, остаток долга, ежемесячный платёж. Суммы — в тиынах */
+export async function parseLoansScreenshot(image: Buffer, mimeType: string): Promise<{ isLoanScreen: boolean; loans: ScreenshotLoan[] } | null> {
+  const ai = getClient();
+  if (!ai) return null;
+  const response = await withRetry(() => ai.models.generateContent({
+    model: MODEL,
+    contents: [{
+      role: "user",
+      parts: [
+        { inlineData: { data: image.toString("base64"), mimeType } },
+        { text: "Это скриншот из банковского приложения. Если на нём список кредитов, рассрочек или один кредит — выпиши каждый." },
+      ],
+    }],
+    config: {
+      systemInstruction: `Ты читаешь скриншоты банковских приложений Казахстана (Kaspi, Halyk и другие).
+isLoanScreen — true, только если на скриншоте видны кредиты, рассрочки или задолженность.
+Для каждого кредита: title — название как на экране; remaining — сколько осталось выплатить (остаток долга) в тенге числом;
+monthlyPayment — ежемесячный платёж в тенге, если указан, иначе null; nextPaymentDay — число месяца следующего платежа, если видно, иначе null.
+Не выдумывай кредиты, которых не видно. Итоговую строку «всего» отдельным кредитом не добавляй.`,
+      thinkingConfig: THINKING,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          isLoanScreen: { type: Type.BOOLEAN },
+          loans: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                remaining: { type: Type.NUMBER },
+                monthlyPayment: { type: Type.NUMBER, nullable: true },
+                nextPaymentDay: { type: Type.INTEGER, nullable: true },
+              },
+              required: ["title", "remaining"],
+            },
+          },
+        },
+        required: ["isLoanScreen", "loans"],
+      },
+    },
+  }));
+  try {
+    const parsed = loansScreenshotResult.parse(JSON.parse(response.text ?? ""));
+    const loans = parsed.loans
+      .filter(l => Number.isFinite(l.remaining) && l.remaining > 0 && l.remaining * MINOR_PER_UNIT <= MAX_AMOUNT_MINOR)
+      .map(l => ({
+        title: l.title.trim().slice(0, 80),
+        remaining: Math.round(l.remaining * MINOR_PER_UNIT),
+        monthlyPayment: l.monthlyPayment && l.monthlyPayment > 0 ? Math.round(l.monthlyPayment * MINOR_PER_UNIT) : null,
+        nextPaymentDay: l.nextPaymentDay && l.nextPaymentDay >= 1 && l.nextPaymentDay <= 31 ? l.nextPaymentDay : null,
+      }));
+    return { isLoanScreen: parsed.isLoanScreen, loans };
+  } catch {
+    return null;
+  }
+}
+
 const merchantResult = z.object({
   items: z.array(z.object({ index: z.number().int(), categoryId: z.string() })),
 });

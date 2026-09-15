@@ -20,6 +20,10 @@ import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@
 import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/lib/domain/guide";
 import { runWithCurrency } from "./currency-context";
 import { getNbkRates } from "./rates";
+import { extractPdfItems } from "./pdf";
+import { isAiConfigured, parseLoansScreenshot } from "./ai";
+import { KASPI_LOANS_TITLE, upsertKaspiLoans } from "./loans";
+import { isKaspiLoanStatement, parseKaspiLoanStatement } from "@/lib/domain/kaspiLoans";
 import { CURRENCIES, POPULAR_RATES, isCurrencyCode } from "@/lib/domain/currency";
 
 const MAX_VOICE_SECONDS = 60;
@@ -252,6 +256,80 @@ function registerHandlers(bot: Bot) {
     { parse_mode: "HTML" }
   ));
 
+  // 🏦 Кредиты Kaspi из выписки: общий платёж и день
+  bot.callbackQuery(/^lo:(\d+):(\d{1,2})$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const monthly = Number(ctx.match[1]);
+    const dueDay = Number(ctx.match[2]);
+    const result = await upsertKaspiLoans(user, { monthly, dueDay });
+    await ctx.answerCallbackQuery(result ? "Добавлено" : "Не получилось");
+    if (!result) return;
+    const url = appUrl();
+    await ctx.editMessageText(
+      `✅ <b>${KASPI_LOANS_TITLE}</b> — ${formatMoney(monthly)} каждое ${dueDay}-е ${result.created ? "добавлены" : "обновлены"} в платежах.\n\n📸 Пришлите скриншот «Мои кредиты» из Kaspi — подставлю остаток долга.`,
+      { parse_mode: "HTML", reply_markup: url ? new InlineKeyboard().webApp("Открыть платежи", `${url}/payments`) : undefined }
+    ).catch(() => undefined);
+  });
+
+  // 📸 Остаток долга со скриншота
+  bot.callbackQuery(/^lr:(\d+):(\d*):(\d*)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const remaining = Number(ctx.match[1]);
+    const monthly = ctx.match[2] ? Number(ctx.match[2]) : undefined;
+    const dueDay = ctx.match[3] ? Number(ctx.match[3]) : undefined;
+    const result = await upsertKaspiLoans(user, { remaining, monthly, dueDay });
+    await ctx.answerCallbackQuery(result ? "Сохранено" : "Не получилось");
+    if (!result) {
+      await ctx.editMessageText("Не хватает ежемесячного платежа и дня списания. Сначала пришлите PDF «Выписка по кредитам» из Kaspi.").catch(() => undefined);
+      return;
+    }
+    const url = appUrl();
+    await ctx.editMessageText(
+      `✅ Остаток долга <b>${formatMoney(remaining)}</b> сохранён в «${KASPI_LOANS_TITLE}».\nВ «Платежах» появились общий долг и калькулятор досрочного погашения.`,
+      { parse_mode: "HTML", reply_markup: url ? new InlineKeyboard().webApp("Открыть платежи", `${url}/payments`) : undefined }
+    ).catch(() => undefined);
+  });
+
+  bot.on("message:photo", async (ctx, next) => {
+    // Скриншот в ответ на просьбу об отзыве — это отзыв, его обработает обработчик ниже
+    if (isFeedbackReply(ctx)) return next();
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    if (!isAiConfigured()) return;
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    const photo = ctx.message.photo.at(-1)!;
+    const file = await ctx.api.getFile(photo.file_id);
+    const response = await fetch(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`);
+    if (!response.ok) {
+      await ctx.reply("Не удалось скачать фото, попробуйте ещё раз.");
+      return;
+    }
+    const parsed = await parseLoansScreenshot(Buffer.from(await response.arrayBuffer()), "image/jpeg").catch(() => null);
+    if (!parsed?.isLoanScreen || parsed.loans.length === 0) {
+      await ctx.reply("На фото не вижу кредитов 🤔 Чтобы подставить остаток долга, пришлите скриншот списка кредитов из приложения банка. Для отзыва со скриншотом — /feedback.");
+      return;
+    }
+    const remaining = parsed.loans.reduce((sum, l) => sum + l.remaining, 0);
+    const monthlyKnown = parsed.loans.every(l => l.monthlyPayment !== null);
+    const monthly = monthlyKnown ? parsed.loans.reduce((sum, l) => sum + (l.monthlyPayment ?? 0), 0) : null;
+    const dueDay = parsed.loans.find(l => l.nextPaymentDay)?.nextPaymentDay ?? null;
+    const lines = [
+      "📸 <b>Кредиты на скриншоте</b>",
+      "",
+      ...parsed.loans.map(l => `• ${escapeHtml(l.title)} — осталось ${formatMoney(l.remaining)}${l.monthlyPayment ? `, платёж ${formatMoney(l.monthlyPayment)}` : ""}`),
+      "",
+      `Остаток долга: <b>${formatMoney(remaining)}</b>`,
+      "",
+      "Проверьте суммы — ИИ мог ошибиться. Если на экране не все кредиты, пришлите ещё скриншот, а потом сохраните общий остаток.",
+    ];
+    await ctx.reply(lines.join("\n"), {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text(`✅ Сохранить остаток ${formatMoney(remaining)}`, `lr:${remaining}:${monthly ?? ""}:${dueDay ?? ""}`),
+    });
+  });
+
   // 💱 Курсы Нацбанка РК
   bot.command(["rates", "kurs"], async ctx => {
     const user = await userFromContext(ctx);
@@ -394,7 +472,33 @@ function registerHandlers(bot: Bot) {
       const file = await ctx.getFile();
       const response = await fetch(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`);
       if (!response.ok) throw new Error(`download failed: ${response.status}`);
-      const result = await createStatementDraft(user, new Uint8Array(await response.arrayBuffer()));
+      const bytes = new Uint8Array(await response.arrayBuffer());
+
+      // Выписка по кредитам Kaspi — не операции по карте, а договоры и ежемесячные платежи
+      const pages = await extractPdfItems(bytes);
+      if (isKaspiLoanStatement(pages)) {
+        const loans = parseKaspiLoanStatement(pages);
+        if (loans.contracts.length === 0 || !loans.dueDay) {
+          await edit("В выписке по кредитам не нашлось действующих кредитов 🎉");
+          return;
+        }
+        const lines = [
+          "🏦 <b>Выписка по кредитам Kaspi</b>",
+          "",
+          `Действующих кредитов: <b>${loans.contracts.length}</b>${loans.closedContracts ? ` (закрыто досрочно: ${loans.closedContracts})` : ""}`,
+          ...loans.contracts.map(c => `• ${escapeHtml(c.title)} — ${formatMoney(c.monthlyPayment)}`),
+          "",
+          `Общий платёж: <b>${formatMoney(loans.totalMonthly)}</b> каждое <b>${loans.dueDay}-е</b>`,
+          "",
+          "Добавлю его в «Платежи» одним обязательством «Kaspi кредиты» — он будет заранее откладываться в лимите, а бот напомнит о списании.",
+          "",
+          "📸 Остатка долга в выписке нет. Пришлите скриншот списка кредитов из Kaspi (раздел «Мои кредиты») — я подставлю остаток сам.",
+        ];
+        await edit(lines.join("\n"), new InlineKeyboard().text(`✅ Добавить ${formatMoney(loans.totalMonthly)} · ${loans.dueDay}-е`, `lo:${loans.totalMonthly}:${loans.dueDay}`));
+        return;
+      }
+
+      const result = await createStatementDraft(user, bytes);
 
       if (!result.ok) {
         await edit(result.reason === "not_supported"
