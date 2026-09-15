@@ -1,4 +1,5 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { prisma } from "./prisma";
 import { createTransaction, resolveCategoryId } from "./ledger";
 import { markPaymentPaid } from "./payments";
@@ -185,5 +186,7 @@ const SPOKEN_AMOUNT = /(тысяч|полтор|сотн|двест|трист|�
 export async function captureAudio(user: CaptureUser, audio: Buffer, mimeType: string, source: TxSource): Promise<CaptureResult> {
   if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
-  return saveAll(user, await parseWithAi({ audio, mimeType }, await aiCategories(user.id)), source, "🎙 голосовое сообщение");
+  // Метка делает исходный текст уникальным: по нему бот собирает операции одного голосового в общий список
+  const rawInput = `🎙 голосовое сообщение · ${randomBytes(4).toString("hex")}`;
+  return saveAll(user, await parseWithAi({ audio, mimeType }, await aiCategories(user.id)), source, rawInput);
 }

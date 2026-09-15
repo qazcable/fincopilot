@@ -7,7 +7,7 @@ import { FEEDBACK_PROMPT, authorLine, feedbackRecipients, saveFeedback } from ".
 import { captureAudio, captureText, type CaptureResult, type CapturedItem } from "./capture";
 import { deleteTransaction } from "./ledger";
 import { markPaymentPaid } from "./payments";
-import { budgetLine, buildMultiReceipt, buildReceipt, escapeHtml } from "./receipt";
+import { budgetLine, buildMultiReceipt, buildReceipt, escapeHtml, siblingTransactionIds } from "./receipt";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { addDays, dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates";
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
@@ -100,21 +100,29 @@ async function replyWithCapture(ctx: Context, user: { id: string; timezone: stri
   await sendReceipts(ctx.api, String(ctx.chat!.id), user, result.items);
 }
 
-/**
- * Чеки операций: одна — обычный чек; несколько — чек на каждую (с кнопками категории и отмены) и итоговая сводка.
- */
-export async function sendReceipts(api: Bot["api"], chatId: string, user: { id: string; timezone: string; cushion: bigint }, items: CapturedItem[]) {
+type ReceiptUser = { id: string; timezone: string; cushion: bigint };
+
+const shortLabel = (text: string, max = 22) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** Одно сообщение со списком операций и кнопками под каждой строкой: категория и отмена */
+async function multiReceiptView(user: ReceiptUser, transactionIds: string[]) {
+  const summary = await buildMultiReceipt(user, transactionIds);
+  const keyboard = new InlineKeyboard();
+  summary.transactions.forEach((tx, index) => {
+    keyboard.text(`🏷 ${index + 1}. ${shortLabel(tx.note || tx.category?.name || "Операция")}`, `mk:${tx.id}`).text("↩️", `mu:${tx.id}`).row();
+  });
+  return { html: summary.html, keyboard, count: summary.transactions.length };
+}
+
+/** Чеки операций: одна — обычный чек; несколько — одно сообщение со списком и кнопками для каждой строки */
+export async function sendReceipts(api: Bot["api"], chatId: string, user: ReceiptUser, items: CapturedItem[]) {
   if (items.length === 1) {
     const receipt = await buildReceipt(user, items[0].transactionId, items[0].linkedPaymentTitle);
     if (receipt) await api.sendMessage(chatId, receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(items[0].transactionId) });
     return;
   }
-  for (const item of items) {
-    const receipt = await buildReceipt(user, item.transactionId, item.linkedPaymentTitle, { budget: false });
-    if (receipt) await api.sendMessage(chatId, receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(item.transactionId) });
-  }
-  const summary = await buildMultiReceipt(user, items.map(i => i.transactionId));
-  await api.sendMessage(chatId, summary.html, { parse_mode: "HTML" });
+  const view = await multiReceiptView(user, items.map(i => i.transactionId));
+  await api.sendMessage(chatId, view.html, { parse_mode: "HTML", reply_markup: view.keyboard });
 }
 
 async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>[0], question: string) {
@@ -358,6 +366,67 @@ function registerHandlers(bot: Bot) {
     if (result) {
       await ctx.editMessageText(result.wasApplied ? `↩️ Импорт отменён: удалено операций — ${result.removed}, баланс карты возвращён.` : "Импорт отменён.");
     }
+  });
+
+  // ── Список из нескольких операций в одном сообщении ──
+
+  /** Пересобирает сообщение со списком после правки или отмены строки */
+  async function refreshMultiReceipt(ctx: Context, user: ReceiptUser, ids: string[]) {
+    if (ids.length === 0) {
+      await ctx.editMessageText("↩️ Все записи из этого сообщения отменены").catch(() => undefined);
+      return;
+    }
+    const view = await multiReceiptView(user, ids);
+    await ctx.editMessageText(view.html, { parse_mode: "HTML", reply_markup: view.keyboard }).catch(() => undefined);
+  }
+
+  // 🏷 Выбор категории для строки списка
+  bot.callbackQuery(/^mk:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const tx = await prisma.transaction.findFirst({ where: { id: ctx.match[1], userId: user.id } });
+    if (!tx) return ctx.answerCallbackQuery("Запись не найдена");
+    const categories = await prisma.category.findMany({ where: { userId: user.id, kind: tx.kind, archivedAt: null }, orderBy: { sortOrder: "asc" } });
+    const keyboard = new InlineKeyboard();
+    categories.forEach((category, index) => {
+      keyboard.text(`${category.emoji} ${category.name}`, `mc:${tx.id}:${category.id}`);
+      if (index % 2 === 1) keyboard.row();
+    });
+    keyboard.row().text("← Назад к списку", `mb:${tx.id}`);
+    await ctx.answerCallbackQuery(shortLabel(tx.note ?? "Выберите категорию", 60));
+    await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+  });
+
+  bot.callbackQuery(/^mc:(\w+):(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const [, transactionId, categoryId] = ctx.match;
+    const tx = await prisma.transaction.findFirst({ where: { id: transactionId, userId: user.id } });
+    const category = tx && await prisma.category.findFirst({ where: { id: categoryId, userId: user.id, kind: tx.kind } });
+    if (!tx || !category) return ctx.answerCallbackQuery("Не получилось");
+    await prisma.transaction.update({ where: { id: tx.id }, data: { categoryId: category.id } });
+    await rememberMerchantCategory(user.id, tx.id, category.id);
+    await ctx.answerCallbackQuery(`${category.emoji} ${category.name}`);
+    await refreshMultiReceipt(ctx, user, await siblingTransactionIds(user.id, tx));
+  });
+
+  bot.callbackQuery(/^mb:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const tx = await prisma.transaction.findFirst({ where: { id: ctx.match[1], userId: user.id } });
+    await ctx.answerCallbackQuery();
+    if (tx) await refreshMultiReceipt(ctx, user, await siblingTransactionIds(user.id, tx));
+  });
+
+  // ↩️ Отмена одной строки списка
+  bot.callbackQuery(/^mu:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const tx = await prisma.transaction.findFirst({ where: { id: ctx.match[1], userId: user.id } });
+    if (!tx) return ctx.answerCallbackQuery("Уже удалено");
+    await deleteTransaction(user.id, tx.id);
+    await ctx.answerCallbackQuery(`Отменено: ${formatMoney(fromDb(tx.amount))}${tx.note ? ` · ${shortLabel(tx.note, 40)}` : ""}`);
+    await refreshMultiReceipt(ctx, user, await siblingTransactionIds(user.id, tx));
   });
 
   // ↩️ Отменить

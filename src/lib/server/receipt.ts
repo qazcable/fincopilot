@@ -34,17 +34,37 @@ export async function buildMultiReceipt(user: ReceiptUser, transactionIds: strin
   const income = ordered.filter(t => t.kind === "INCOME").reduce((sum, t) => sum + fromDb(t.amount), 0);
   const lines = [
     `✅ <b>Записал операций: ${ordered.length}</b>`,
-    ...ordered.map(t => {
+    // Номера совпадают с кнопками под сообщением
+    ...ordered.map((t, index) => {
       const amount = formatMoney(fromDb(t.amount) * (t.kind === "EXPENSE" ? -1 : 1), { sign: true });
       const category = t.category ? `${t.category.emoji} ${t.category.name}` : "Без категории";
-      return `• <b>${amount}</b> · ${escapeHtml(category)}${t.note ? ` — ${escapeHtml(t.note)}` : ""}`;
+      return `${index + 1}. <b>${amount}</b> · ${escapeHtml(category)}${t.note ? ` — ${escapeHtml(t.note)}` : ""}`;
     }),
     [expense > 0 ? `Расходы: <b>${formatMoney(expense)}</b>` : null, income > 0 ? `Поступления: <b>${formatMoney(income)}</b>` : null].filter(Boolean).join(" · "),
     "",
     await budgetLine(user),
   ];
   const html = lines.join("\n");
-  return { html, plain: stripHtml(html) };
+  return { html, plain: stripHtml(html), transactions: ordered };
+}
+
+/**
+ * Операции, записанные из того же сообщения, что и `transactionId`: одинаковый исходный текст и время записи.
+ * Нужны, чтобы после правки одной строки заново собрать общее сообщение со списком.
+ */
+export async function siblingTransactionIds(userId: string, tx: { rawInput: string | null; createdAt: Date; source: string }) {
+  if (!tx.rawInput) return [];
+  const siblings = await prisma.transaction.findMany({
+    where: {
+      userId,
+      source: tx.source,
+      rawInput: tx.rawInput,
+      createdAt: { gte: new Date(tx.createdAt.getTime() - 60_000), lte: new Date(tx.createdAt.getTime() + 60_000) },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  return siblings.map(s => s.id);
 }
 
 /** Текст чека (HTML) и простой текст для Apple Shortcuts */
