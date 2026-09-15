@@ -5,7 +5,8 @@ import { ensureSchedule } from "./payments";
 import { calculateBudget, nextIncomeDate } from "@/lib/domain/budget";
 import { dayKeyOf, startOfDayInstant, addDays } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
-import { NOT_TRANSIT } from "@/lib/domain/constants";
+import { NOT_PEER_OUT, NOT_TRANSIT } from "@/lib/domain/constants";
+import { peerSums } from "./peer";
 import { previousIncomeDate, summarizeGoals } from "@/lib/domain/goals";
 
 type BudgetUser = { id: string; timezone: string; cushion: bigint };
@@ -31,13 +32,21 @@ export async function getBudgetSnapshot(user: BudgetUser) {
         account: { inBudget: true },
         // Оплата по графику уже была в резерве — она не должна съедать лимит на день
         scheduledPaymentId: null,
-        // Транзит друзей — не траты
-        ...NOT_TRANSIT,
+        // Транзит друзей — не траты; переводы людям считаются ниже по сальдо
+        AND: [NOT_TRANSIT, NOT_PEER_OUT],
         occurredAt: { gte: startOfDayInstant(today, user.timezone), lt: startOfDayInstant(addDays(today, 1), user.timezone) },
       },
       _sum: { amount: true },
     }),
   ]);
+
+  // Чужие деньги, пришедшие за последние 2 дня и ещё не отправленные дальше, покрывают сегодняшние переводы и оплаты
+  const inBudget = { account: { inBudget: true } };
+  const [recentPeer, todayPeer] = await Promise.all([
+    peerSums(user.id, { gte: startOfDayInstant(addDays(today, -2), user.timezone), lt: startOfDayInstant(today, user.timezone) }, inBudget),
+    peerSums(user.id, { gte: startOfDayInstant(today, user.timezone), lt: startOfDayInstant(addDays(today, 1), user.timezone) }, inBudget),
+  ]);
+  const peerCarry = Math.max(0, recentPeer.in - recentPeer.out) + todayPeer.in;
 
   const incomeDays = incomes.map(i => i.dayOfMonth);
   const horizon = nextIncomeDate(today, incomeDays);
@@ -51,7 +60,7 @@ export async function getBudgetSnapshot(user: BudgetUser) {
     kind: p.obligation.kind,
   }));
 
-  const spentToday = fromDb(spentTodayAgg._sum.amount);
+  const spentToday = Math.max(0, fromDb(spentTodayAgg._sum.amount) + todayPeer.out - peerCarry);
   const budget = calculateBudget({
     today,
     horizon,

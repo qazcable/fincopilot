@@ -8,7 +8,8 @@ import { formatMoney, fromDb } from "@/lib/domain/money";
 import { simulatePayoff } from "@/lib/domain/payoff";
 import { forecastHeadline } from "@/lib/domain/forecast";
 import { getForecast } from "./forecast";
-import { ACCOUNT_KINDS, NOT_TRANSIT, OBLIGATION_KINDS, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
+import { peerSums } from "./peer";
+import { ACCOUNT_KINDS, NOT_PEER_OUT, NOT_TRANSIT, OBLIGATION_KINDS, PEER_IN_WHERE, netPeer, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
 
 type AdvisorUser = { id: string; timezone: string; cushion: bigint; firstName: string | null };
 
@@ -37,13 +38,17 @@ export async function buildAdvisorContext(user: AdvisorUser) {
   const [monthly, limits, merchants, obligations, incomes] = await Promise.all([
     Promise.all(monthStarts.map(async m => {
       const range = monthRange(m.year, m.month, user.timezone);
-      const sums = await prisma.transaction.groupBy({
-        by: ["kind"],
-        where: { userId: user.id, kind: { in: ["EXPENSE", "INCOME"] }, occurredAt: { gte: range.from, lt: range.to }, ...NOT_TRANSIT },
-        _sum: { amount: true },
-      });
+      const [sums, peer] = await Promise.all([
+        prisma.transaction.groupBy({
+          by: ["kind"],
+          where: { userId: user.id, kind: { in: ["EXPENSE", "INCOME"] }, occurredAt: { gte: range.from, lt: range.to }, AND: [NOT_TRANSIT, NOT_PEER_OUT, { NOT: PEER_IN_WHERE }] },
+          _sum: { amount: true },
+        }),
+        peerSums(user.id, { gte: range.from, lt: range.to }),
+      ]);
       const sum = (kind: string) => fromDb(sums.find(s => s.kind === kind)?._sum.amount);
-      return { ...m, expense: sum("EXPENSE"), income: sum("INCOME") };
+      const net = netPeer(peer.out, peer.in);
+      return { ...m, expense: sum("EXPENSE") + net.expense, income: sum("INCOME") + net.income, peer };
     })),
     getLimitsOverview(user, year, month),
     prisma.transaction.groupBy({
@@ -81,13 +86,15 @@ export async function buildAdvisorContext(user: AdvisorUser) {
     for (const income of incomes) lines.push(`• ${income.title}: ${income.dayOfMonth} числа${income.amount !== null ? `, ~${money(fromDb(income.amount))}` : ""}`);
   }
 
-  lines.push("", "ДОХОДЫ И РАСХОДЫ ПО МЕСЯЦАМ (переводы между своими счетами не учтены)");
+  lines.push("", "ДОХОДЫ И РАСХОДЫ ПО МЕСЯЦАМ");
+  lines.push("Переводы между своими счетами не учтены. Через счета пользователя друзья часто «прогоняют» деньги (пришло — отправил дальше частями или оплатил), поэтому переводы людям считаются по сальдо: в расходах только то, что ушло сверх пришедшего от людей, в доходах — наоборот.");
   for (const m of monthly) {
     const current = m.year === year && m.month === month;
-    lines.push(`• ${monthName(m.month)} ${m.year}${current ? ` (текущий, ${day} дн.)` : ""}: расходы ${money(m.expense)}, доходы ${money(m.income)}`);
+    lines.push(`• ${monthName(m.month)} ${m.year}${current ? ` (текущий, ${day} дн.)` : ""}: расходы ${money(m.expense)}, доходы ${money(m.income)} (переводы людям: пришло ${money(m.peer.in)}, ушло ${money(m.peer.out)})`);
   }
 
-  const categories = limits.filter(c => c.spent > 0 || c.averageSpent > 0 || c.limit !== null).sort((a, b) => b.spent - a.spent);
+  // «Переводы людям» по категориям не показываем — они выше, по сальдо
+  const categories = limits.filter(c => c.name !== "Переводы людям" && (c.spent > 0 || c.averageSpent > 0 || c.limit !== null)).sort((a, b) => b.spent - a.spent);
   if (categories.length > 0) {
     lines.push("", `РАСХОДЫ ПО КАТЕГОРИЯМ: этот месяц / среднее в месяц за 3 прошлых месяца / лимит`);
     for (const c of categories) {

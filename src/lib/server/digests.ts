@@ -6,7 +6,8 @@ import { getMonthLimitLines } from "./limits";
 import { addDays, dayKeyOf, daysBetween, formatDayKey, parseKey, startOfDayInstant, type DayKey } from "@/lib/domain/dates";
 import { getForecast } from "./forecast";
 import { forecastHeadline } from "@/lib/domain/forecast";
-import { NOT_TRANSIT } from "@/lib/domain/constants";
+import { NOT_PEER_OUT, NOT_TRANSIT, PEER_IN_WHERE, netPeer } from "@/lib/domain/constants";
+import { peerSums } from "./peer";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { formatEvening, formatLimits, formatMorning, formatWeekly, previousWeek, type CategoryAmount } from "@/lib/domain/digest";
 
@@ -18,14 +19,16 @@ const REMINDER_DAYS = 2;
 
 async function categoryTotals(user: DigestUser, from: DayKey, toExclusive: DayKey, options: { excludePayments?: boolean } = {}) {
   const range = { gte: startOfDayInstant(from, user.timezone), lt: startOfDayInstant(toExclusive, user.timezone) };
-  const [byCategory, income] = await Promise.all([
+  const [byCategory, income, peer] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["categoryId"],
-      where: { userId: user.id, kind: "EXPENSE", occurredAt: range, ...NOT_TRANSIT, ...(options.excludePayments ? { scheduledPaymentId: null } : {}) },
+      where: { userId: user.id, kind: "EXPENSE", occurredAt: range, AND: [NOT_TRANSIT, NOT_PEER_OUT], ...(options.excludePayments ? { scheduledPaymentId: null } : {}) },
       _sum: { amount: true },
     }),
-    prisma.transaction.aggregate({ where: { userId: user.id, kind: "INCOME", occurredAt: range, ...NOT_TRANSIT }, _sum: { amount: true } }),
+    prisma.transaction.aggregate({ where: { userId: user.id, kind: "INCOME", occurredAt: range, AND: [NOT_TRANSIT, { NOT: PEER_IN_WHERE }] }, _sum: { amount: true } }),
+    peerSums(user.id, range),
   ]);
+  const net = netPeer(peer.out, peer.in);
 
   const categories = await prisma.category.findMany({
     where: { id: { in: byCategory.map(r => r.categoryId).filter((id): id is string => id !== null) } },
@@ -36,8 +39,13 @@ async function categoryTotals(user: DigestUser, from: DayKey, toExclusive: DayKe
       return { emoji: category?.emoji ?? "💸", name: category?.name ?? "Без категории", amount: fromDb(row._sum.amount) };
     })
     .sort((a, b) => b.amount - a.amount);
+  // Переводы людям — только сальдо сверх пришедшего от людей
+  if (net.expense > 0) {
+    items.push({ emoji: "💸", name: "Переводы людям (сальдо)", amount: net.expense });
+    items.sort((a, b) => b.amount - a.amount);
+  }
 
-  return { items, expense: items.reduce((sum, c) => sum + c.amount, 0), income: fromDb(income._sum.amount) };
+  return { items, expense: items.reduce((sum, c) => sum + c.amount, 0), income: fromDb(income._sum.amount) + net.income };
 }
 
 /** Утро: лимит на день, платежи в ближайшие 2 дня (с кнопками «Оплачено») и предупреждения лимитов */

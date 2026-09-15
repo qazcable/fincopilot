@@ -74,4 +74,23 @@ export const TRANSIT_KEYS = ["transit_in", "transit_out"];
 /** Условие Prisma: операция не транзит (операции без категории проходят) */
 export const NOT_TRANSIT = { NOT: { category: { key: { in: TRANSIT_KEYS } } } };
 
-export const isTransitKey = (key: string | null | undefined) => key != null && TRANSIT_KEYS.includes(key);
+// Переводы людям считаются по сальдо: через счета часто проходят чужие деньги (друзья «прогоняют» суммы),
+// поэтому расход — только то, что ушло сверх пришедшего от людей, а доход — наоборот
+export const PEER_OUT_KEY = "transfers";
+export const PEER_IN_KEY = "gift_in";
+
+/** Условия Prisma: исходящие переводы людям; входящие переводы от людей (возвраты и кешбэк — не переводы) */
+export const PEER_OUT_WHERE = { kind: "EXPENSE", category: { key: PEER_OUT_KEY } };
+export const PEER_IN_WHERE = { kind: "INCOME", category: { key: PEER_IN_KEY }, NOT: [{ note: { startsWith: "Возврат" } }, { note: { startsWith: "Кешбэк" } }] };
+export const NOT_PEER_OUT = { NOT: { category: { key: PEER_OUT_KEY } } };
+
+export function isPeerIn(key: string | null | undefined, note: string | null | undefined) {
+  return key === PEER_IN_KEY && !/^(Возврат|Кешбэк)/.test(note ?? "");
+}
+
+/** Сальдо переводов людям: сколько считать расходом и сколько доходом */
+export function netPeer(out: number, incoming: number) {
+  return { expense: Math.max(0, out - incoming), income: Math.max(0, incoming - out) };
+}
+
+export const isTransitKey =(key: string | null | undefined) => key != null && TRANSIT_KEYS.includes(key);

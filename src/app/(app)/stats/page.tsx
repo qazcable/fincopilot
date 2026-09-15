@@ -67,6 +67,12 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
                   <Money value={stats.previousExpense} className="mt-0.5 block text-[15px] font-semibold" />
                 </div>
               </div>
+              {(stats.peer.in > 0 || stats.peer.out > 0) && (
+                <p className="mt-3 rounded-2xl bg-surface-2 px-3.5 py-2.5 text-[12px] leading-snug text-muted">
+                  🔄 Переводы людям по сальдо: пришло <Money value={stats.peer.in} className="font-medium text-fg" />, ушло <Money value={stats.peer.out} className="font-medium text-fg" />.
+                  {" "}{stats.peer.out > stats.peer.in ? "В расходах — только разница." : stats.peer.in > stats.peer.out ? "В доходах — только разница." : "Взаимно погасились."}
+                </p>
+              )}
             </Card>
 
             <Card className="p-5">

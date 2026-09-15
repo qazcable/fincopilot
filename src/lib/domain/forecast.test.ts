@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { expectedMonthlyIncome, forecastBalance, typicalDailySpend } from "./forecast";
+import { isPeerIn, netPeer } from "./constants";
 
 describe("forecastBalance", () => {
   const base = {
@@ -32,6 +33,16 @@ describe("forecastBalance", () => {
     const result = forecastBalance({ ...base, incomes: [] });
     expect(result.gapStart).toBe("2026-09-22");
     expect(result.gapEnd).toBeNull();
+  });
+});
+
+describe("netPeer", () => {
+  it("counts only the difference of money from and to people", () => {
+    // Друг прислал 50 000, отправил двоим по 20 000, 10 000 ушло на оплату
+    expect(netPeer(40_000_00, 50_000_00)).toEqual({ expense: 0, income: 10_000_00 });
+    expect(netPeer(70_000_00, 50_000_00)).toEqual({ expense: 20_000_00, income: 0 });
+    expect(isPeerIn("gift_in", "Данат Ш.")).toBe(true);
+    expect(isPeerIn("gift_in", "Возврат: WOLT.COM")).toBe(false);
   });
 });
 

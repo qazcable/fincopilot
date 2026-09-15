@@ -8,9 +8,10 @@ import { limitProgress } from "@/lib/domain/limits";
 import type { AppUser } from "./auth";
 import { addDays, addMonths, dayKeyOf, instantToLocalInput, monthRange, parseKey } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
-import { NOT_TRANSIT, isTransitKey } from "@/lib/domain/constants";
+import { NOT_PEER_OUT, NOT_TRANSIT, PEER_OUT_KEY, isPeerIn, isTransitKey, netPeer } from "@/lib/domain/constants";
+import { peerSums } from "./peer";
 
-export type CategoryDto = { id: string; name: string; emoji: string; color: string; kind: string };
+export type CategoryDto = { id: string; name: string; emoji: string; color: string; kind: string; key?: string | null };
 export type AccountDto = { id: string; name: string; kind: string; balance: number; inBudget: boolean; isDefault: boolean };
 
 export type TransactionDto = {
@@ -62,7 +63,7 @@ function toTransactionDto(tx: TxWithRelations, timezone: string): TransactionDto
     isPayment: tx.scheduledPaymentId !== null,
     transit: isTransitKey(tx.category?.key),
     category: tx.category && {
-      id: tx.category.id, name: tx.category.name, emoji: tx.category.emoji, color: tx.category.color, kind: tx.category.kind,
+      id: tx.category.id, name: tx.category.name, emoji: tx.category.emoji, color: tx.category.color, kind: tx.category.kind, key: tx.category.key,
     },
   };
 }
@@ -137,13 +138,20 @@ export async function getStats(user: AppUser, year: number, month: number) {
   const [transactions, previousExpense] = await Promise.all([
     loadTransactions(user.id, { occurredAt: { gte: current.from, lt: current.to } }),
     prisma.transaction.aggregate({
-      where: { userId: user.id, kind: "EXPENSE", occurredAt: { gte: previous.from, lt: previous.to }, ...NOT_TRANSIT },
+      where: { userId: user.id, kind: "EXPENSE", occurredAt: { gte: previous.from, lt: previous.to }, AND: [NOT_TRANSIT, NOT_PEER_OUT] },
       _sum: { amount: true },
     }),
   ]);
 
   const items = transactions.map(tx => toTransactionDto(tx, user.timezone));
-  const expenses = items.filter(t => t.kind === "EXPENSE" && !t.transit);
+  const peerOutItems = items.filter(t => t.kind === "EXPENSE" && !t.transit && t.category?.key === PEER_OUT_KEY);
+  const peerInItems = items.filter(t => t.kind === "INCOME" && !t.transit && isPeerIn(t.category?.key, t.note));
+  const expenses = items.filter(t => t.kind === "EXPENSE" && !t.transit && t.category?.key !== PEER_OUT_KEY);
+  const peer = {
+    out: peerOutItems.reduce((s, t) => s + t.amount, 0),
+    in: peerInItems.reduce((s, t) => s + t.amount, 0),
+  };
+  const net = netPeer(peer.out, peer.in);
 
   const byCategory = new Map<string, { category: CategoryDto | null; total: number; count: number }>();
   for (const tx of expenses) {
@@ -153,16 +161,22 @@ export async function getStats(user: AppUser, year: number, month: number) {
     entry.count++;
     byCategory.set(key, entry);
   }
+  // Переводы людям в расходах — только то, что ушло сверх пришедшего от людей
+  if (net.expense > 0 && peerOutItems[0]) {
+    byCategory.set(peerOutItems[0].category!.id, { category: peerOutItems[0].category, total: net.expense, count: peerOutItems.length });
+  }
 
   const byDay = new Map<string, number>();
   for (const tx of expenses) byDay.set(tx.dayKey, (byDay.get(tx.dayKey) ?? 0) + tx.amount);
 
+  const previousPeer = await peerSums(user.id, { gte: previous.from, lt: previous.to });
   return {
-    expense: expenses.reduce((s, t) => s + t.amount, 0),
-    income: items.filter(t => t.kind === "INCOME" && !t.transit).reduce((s, t) => s + t.amount, 0),
-    previousExpense: fromDb(previousExpense._sum.amount),
+    expense: expenses.reduce((s, t) => s + t.amount, 0) + net.expense,
+    income: items.filter(t => t.kind === "INCOME" && !t.transit && !isPeerIn(t.category?.key, t.note)).reduce((s, t) => s + t.amount, 0) + net.income,
+    previousExpense: fromDb(previousExpense._sum.amount) + netPeer(previousPeer.out, previousPeer.in).expense,
     categories: [...byCategory.values()].sort((a, b) => b.total - a.total),
     byDay: Object.fromEntries(byDay),
+    peer,
     today: dayKeyOf(new Date(), user.timezone),
   };
 }
