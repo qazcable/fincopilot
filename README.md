@@ -33,10 +33,12 @@ src/app/api/       вход через Telegram, вебхук бота, быст
 
 ```bash
 npm install
-cp .env.example .env    # заполнить TELEGRAM_BOT_TOKEN, SESSION_SECRET, GEMINI_API_KEY
+cp .env.example .env    # заполнить DATABASE_URL(_UNPOOLED), TELEGRAM_BOT_TOKEN, SESSION_SECRET, GEMINI_API_KEY
 npx prisma migrate dev
 npm run dev
 ```
+
+Для разработки удобно завести в Neon отдельную ветку базы (branch) и указать её строки подключения.
 
 В обычном браузере приложение откроется под пользователем `DEV_TELEGRAM_ID` (только в dev-режиме).
 
@@ -50,24 +52,17 @@ npm run lint
 
 ## Деплой
 
-Нужен публичный HTTPS-адрес (`APP_URL`).
+Хостинг — **Vercel**, база — **Neon Postgres** (подключается через Storage → Neon в проекте Vercel и сама создаёт `DATABASE_URL` и `DATABASE_URL_UNPOOLED`).
 
-1. **VPS (рекомендуется для личного использования)**: `npm ci && npx prisma migrate deploy && npm run build && npm start` за nginx/Caddy. SQLite-файл бэкапить (например, Litestream).
-2. **Vercel**: SQLite там не сохраняется — поменяйте `provider` в `prisma/schema.prisma` на `postgresql`, пересоздайте миграции и укажите `DATABASE_URL` от Neon/Supabase.
+- Каждый push в `main` деплоится автоматически; скрипт `vercel-build` применяет миграции (`prisma migrate deploy`) перед сборкой.
+- Остальные переменные из `.env.example` добавляются в Settings → Environment Variables (`DEV_TELEGRAM_ID` в продакшене не нужен).
+- Напоминания о платежах: Vercel Cron из `vercel.json` раз в день (04:00 UTC = 09:00 в Алматы) вызывает `/api/cron/reminders` с `Authorization: Bearer $CRON_SECRET`.
 
-После деплоя:
-
-```bash
-npm run bot:webhook     # регистрирует вебхук, команды и кнопку меню Mini App
-```
-
-Напоминания — раз в день вызывать крон:
+После первого деплоя укажите `APP_URL` (адрес проекта) и зарегистрируйте бота:
 
 ```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://your-domain/api/cron/reminders
+npm run bot:webhook     # вебхук, команды и кнопка меню Mini App
 ```
-
-(на VPS — строка в `crontab`, на Vercel — `vercel.json` → `crons`.)
 
 Чтобы ботом пользовались только вы, укажите свой Telegram ID в `ALLOWED_TELEGRAM_IDS`.
 

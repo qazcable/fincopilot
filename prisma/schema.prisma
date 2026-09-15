@@ -1,109 +1,153 @@
+// Все денежные суммы — BigInt в тиынах (1 ₸ = 100 тиын).
+// Строковые "enum"-поля проверяются в коде (src/lib/domain).
+
 datasource db {
-  provider = "sqlite" // Для облачного продакшена: "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Пул соединений Neon — для приложения
+  url       = env("DATABASE_URL")
+  // Прямое соединение — для миграций
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 generator client {
   provider = "prisma-client-js"
 }
 
-// Профиль пользователя Telegram
 model User {
-  id              String        @id @default(cuid())
-  telegramId      BigInt        @unique // ID пользователя в Telegram
-  username        String?
-  firstName       String?
-  apiKey          String        @unique @default(cuid()) // Секретный токен для Apple Shortcut
-  dailyBudgetMode String        @default("AUTO") // AUTO, STRICT, RELAXED
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id               String   @id @default(cuid())
+  telegramId       BigInt   @unique
+  username         String?
+  firstName        String?
+  timezone         String   @default("Asia/Almaty")
+  // Неприкосновенный остаток, который не участвует в лимите на день
+  cushion          BigInt   @default(0)
+  remindersEnabled Boolean  @default(true)
+  onboardedAt      DateTime?
+  // sha256 от ключа для Apple Shortcuts; сам ключ показывается один раз
+  apiKeyHash       String?  @unique
+  apiKeyHint       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  accounts        Account[]
-  categories      Category[]
-  transactions    Transaction[]
-  obligations     Obligation[]
-  chatMessages    ChatMessage[]
+  accounts         Account[]
+  categories       Category[]
+  transactions     Transaction[]
+  obligations      Obligation[]
+  payments         ScheduledPayment[]
+  incomes          RecurringIncome[]
 }
 
-// Счета пользователя
 model Account {
-  id           String        @id @default(cuid())
-  userId       String
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name         String        // "Карта Т-Банк", "Наличные", "Кредитка Сбер"
-  type         String        // DEBIT, CASH, SAVINGS, CREDIT
-  balance      Float         @default(0.0)
-  currency     String        @default("RUB")
-  isDefault    Boolean       @default(false) // Счет для автоматических списаний голосом
-  transactions Transaction[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  // CARD | CASH | SAVINGS
+  kind           String        @default("CARD")
+  openingBalance BigInt        @default(0)
+  // Учитывать ли счёт в лимите на день (накопления — нет)
+  inBudget       Boolean       @default(true)
+  isDefault      Boolean       @default(false)
+  archivedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  transactions   Transaction[]
+
+  @@index([userId])
 }
 
-// Категории трат
 model Category {
   id           String        @id @default(cuid())
   userId       String
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name         String        // "Продукты", "Транспорт", "Кафе"
-  type         String        // EXPENSE, INCOME
-  icon         String?       // "shopping-cart", "coffee", "car"
-  color        String?       // HEX код цвета
+  // Стабильный ключ стандартной категории (food, cafe, ...) — для автоподбора
+  key          String?
+  name         String
+  // EXPENSE | INCOME
+  kind         String
+  emoji        String
+  color        String
+  sortOrder    Int           @default(0)
+  archivedAt   DateTime?
   transactions Transaction[]
+
+  @@unique([userId, key])
+  @@index([userId, kind])
 }
 
-// Транзакции
 model Transaction {
-  id             String       @id @default(cuid())
-  userId         String
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  amount         Float
-  type           String       // EXPENSE, INCOME, TRANSFER, DEBT_PAYMENT
-  date           DateTime     @default(now())
-  description    String?
-  source         String       @default("MANUAL") // MANUAL, VOICE_ACTION_BUTTON, TELEGRAM_BOT
-  
-  accountId      String
-  account        Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  
-  categoryId     String?
-  category       Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  
-  obligationId   String?
-  obligation     Obligation?  @relation(fields: [obligationId], references: [id], onDelete: SetNull)
+  id                 String            @id @default(cuid())
+  userId             String
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId          String
+  account            Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  categoryId         String?
+  category           Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  // EXPENSE | INCOME
+  kind               String
+  amount             BigInt
+  occurredAt         DateTime          @default(now())
+  note               String?
+  // APP | BOT_TEXT | BOT_VOICE | SHORTCUT | PAYMENT
+  source             String            @default("APP")
+  rawInput           String?
+  scheduledPaymentId String?           @unique
+  scheduledPayment   ScheduledPayment? @relation(fields: [scheduledPaymentId], references: [id], onDelete: SetNull)
+  createdAt          DateTime          @default(now())
 
-  rawVoiceText   String?      // Исходный текст распознанной фразы для аудита
-  createdAt      DateTime     @default(now())
+  @@index([userId, occurredAt])
 }
 
-// Кредиты и обязательства
 model Obligation {
-  id              String        @id @default(cuid())
-  userId          String
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  title           String        // "Ипотека", "Автокредит", "Рассрочка Яндекс"
-  type            String        // CONSUMER_LOAN, CREDIT_CARD, INSTALLMENT, RECURRING_BILL
-  totalAmount     Float?        // Начальное тело долга
-  remainingAmount Float         // Текущий остаток долга
-  interestRate    Float?        // Процентная ставка
-  monthlyPayment  Float         // Сумма регулярного платежа
-  dueDayOfMonth   Int           // День списания (1-31)
-  gracePeriodEnd  DateTime?     // Для кредитных карт
-  isCompleted     Boolean       @default(false)
-  
-  transactions    Transaction[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id             String             @id @default(cuid())
+  userId         String
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  // LOAN | CREDIT_CARD | INSTALLMENT | BILL
+  kind           String
+  monthlyAmount  BigInt
+  dueDay         Int
+  // Для BILL — null (тела долга нет)
+  principalLeft  BigInt?
+  principalTotal BigInt?
+  interestRate   Float?
+  graceUntil     DateTime?
+  // С какой даты (локальной, YYYY-MM-DD) строить график
+  startsOn       String
+  completedAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  payments       ScheduledPayment[]
+
+  @@index([userId])
 }
 
-// История диалогов с Gemini
-model ChatMessage {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      String   // "user" | "assistant"
-  content   String
-  createdAt DateTime @default(now())
+model ScheduledPayment {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  obligationId String
+  obligation   Obligation   @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  // Локальная дата платежа YYYY-MM-DD
+  dueOn        String
+  amount       BigInt
+  // PENDING | PAID | SKIPPED
+  status       String       @default("PENDING")
+  paidAt       DateTime?
+  remindedAt   DateTime?
+  transaction  Transaction?
+
+  @@unique([obligationId, dueOn])
+  @@index([userId, status, dueOn])
+}
+
+model RecurringIncome {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String
+  amount     BigInt?
+  dayOfMonth Int
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
 }

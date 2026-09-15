@@ -29,14 +29,8 @@ export async function ensureSchedule(user: { id: string; timezone: string }) {
     ).map(p => ({ userId: user.id, obligationId: obligation.id, dueOn: p.dueOn, amount: toDb(p.amount) }))
   );
 
-  for (const row of rows) {
-    // SQLite не поддерживает createMany skipDuplicates — upsert по уникальному ключу
-    await prisma.scheduledPayment.upsert({
-      where: { obligationId_dueOn: { obligationId: row.obligationId, dueOn: row.dueOn } },
-      create: row,
-      update: {},
-    });
-  }
+  // Уникальный ключ (obligationId, dueOn) защищает от дублей при параллельных запросах
+  if (rows.length > 0) await prisma.scheduledPayment.createMany({ data: rows, skipDuplicates: true });
 }
 
 /** Отметить платёж оплаченным: операция расхода + уменьшение долга */
