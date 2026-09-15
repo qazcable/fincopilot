@@ -18,6 +18,9 @@ import { formatImportApplied, formatImportDraft, hasSomethingToImport } from "@/
 import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
 import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
 import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/lib/domain/guide";
+import { runWithCurrency } from "./currency-context";
+import { getNbkRates } from "./rates";
+import { CURRENCIES, POPULAR_RATES, isCurrencyCode } from "@/lib/domain/currency";
 
 const MAX_VOICE_SECONDS = 60;
 // Ограничение Bot API на скачивание файлов
@@ -152,6 +155,14 @@ async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>
 }
 
 function registerHandlers(bot: Bot) {
+  // Все суммы в ответах бота — в валюте пользователя
+  bot.use(async (ctx, next) => {
+    const currency = ctx.from
+      ? (await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) }, select: { currency: true } }))?.currency
+      : null;
+    await runWithCurrency(currency, next);
+  });
+
   bot.command("start", async ctx => {
     // Вход по приглашению: t.me/<бот>?start=inv_<code>
     const payload = ctx.match?.trim() ?? "";
@@ -240,6 +251,28 @@ function registerHandlers(bot: Bot) {
     "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold, Банк ЦентрКредит, Freedom или Alatau City Bank — импортирую операции без дублей, а переводы между своими картами свяжу.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.\n\n🧪 /feedback — отзыв или идея: что неудобно, что сломалось, чего не хватает.",
     { parse_mode: "HTML" }
   ));
+
+  // 💱 Курсы Нацбанка РК
+  bot.command(["rates", "kurs"], async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const { date, rates } = await getNbkRates();
+    if (rates.length === 0) {
+      await ctx.reply("Сайт Нацбанка сейчас не отвечает — попробуйте чуть позже.");
+      return;
+    }
+    const number = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const lines = POPULAR_RATES.map(code => rates.find(r => r.code === code)).filter(r => r !== undefined).map(rate => {
+      const info = isCurrencyCode(rate.code) ? CURRENCIES[rate.code] : null;
+      const arrow = rate.direction === "UP" ? "▲" : rate.direction === "DOWN" ? "▼" : "";
+      return `${info?.flag ?? "💱"} <b>${rate.code}</b> — ${number.format(rate.rate)} ₸ ${arrow}`.trim();
+    });
+    const url = appUrl();
+    await ctx.reply(
+      [`💱 <b>Курс Нацбанка РК</b>${date ? ` на ${date.split("-").reverse().join(".")}` : ""}`, "", ...lines].join("\n"),
+      { parse_mode: "HTML", reply_markup: url ? new InlineKeyboard().webApp("Все курсы и конвертер", `${url}/rates`) : undefined }
+    );
+  });
 
   // 📖 Инструкция: меню тем → тема (что это, зачем, как работает)
   bot.command(["guide", "instruction"], async ctx => {
@@ -562,7 +595,12 @@ function registerHandlers(bot: Bot) {
  * Предупреждение о лимите категории для трат, внесённых в приложении
  * (в боте и быстрой команде оно показывается прямо в чеке).
  */
-export async function notifyCategoryLimit(user: { id: string; timezone: string; telegramId: bigint }, categoryId: string | null, at: Date) {
+export async function notifyCategoryLimit(user: { id: string; timezone: string; telegramId: bigint; currency: string }, categoryId: string | null, at: Date) {
+  // Вызывается после ответа (after) — вне контекста запроса, валюту задаём явно
+  return runWithCurrency(user.currency, () => sendCategoryLimit(user, categoryId, at));
+}
+
+async function sendCategoryLimit(user: { id: string; timezone: string; telegramId: bigint }, categoryId: string | null, at: Date) {
   const result = await evaluateCategoryLimit(user, categoryId, at);
   if (!result?.newLevel || !isBotConfigured()) return;
   try {
@@ -641,6 +679,11 @@ export async function sendScheduledDigests(slot: "morning" | "evening") {
   for (const user of users) {
     // Итоги получают только те, у кого сейчас есть доступ
     if (!hasAccess(user)) continue;
+    await runWithCurrency(user.currency, () => deliverAll(user));
+  }
+  return result;
+
+  async function deliverAll(user: ScheduledUser) {
     const today = dayKeyOf(new Date(), user.timezone);
     if (slot === "morning") {
       if (user.morningDigest) {
@@ -665,5 +708,4 @@ export async function sendScheduledDigests(slot: "morning" | "evening") {
       await deliver(user, "lastEveningOn", () => buildEvening(user));
     }
   }
-  return result;
 }

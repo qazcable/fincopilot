@@ -6,9 +6,9 @@ describe("parseWalletAmount", () => {
     expect(parseWalletAmount("1 300,00 ₸")).toEqual({ amount: 130_000, currency: "KZT" });
     expect(parseWalletAmount("₸1,300.00")).toEqual({ amount: 130_000, currency: "KZT" });
     expect(parseWalletAmount("₸1,300")).toEqual({ amount: 130_000, currency: "KZT" });
-    expect(parseWalletAmount("1300")).toEqual({ amount: 130_000, currency: "KZT" });
+    expect(parseWalletAmount("1300")).toEqual({ amount: 130_000, currency: null });
     expect(parseWalletAmount("12 500 KZT")).toEqual({ amount: 1_250_000, currency: "KZT" });
-    expect(parseWalletAmount("$23.20")).toEqual({ amount: 2_320, currency: "OTHER" });
+    expect(parseWalletAmount("$23.20")).toEqual({ amount: 2_320, currency: "USD" });
     expect(parseWalletAmount("—")).toBeNull();
   });
 });

@@ -19,6 +19,10 @@ model User {
   username         String?
   firstName        String?
   timezone         String   @default("Asia/Almaty")
+  // Основная валюта учёта (ISO-код): все суммы пользователя хранятся и показываются в ней
+  currency         String   @default("KZT")
+  // Дополнительная валюта для справки («≈ 85 $») по курсу Нацбанка; null — не показывать
+  secondaryCurrency String? @default("USD")
   // Неприкосновенный остаток, который не участвует в лимите на день
   cushion          BigInt   @default(0)
   remindersEnabled Boolean  @default(true)

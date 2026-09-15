@@ -5,10 +5,18 @@ import { readSession } from "./session";
 import type { TelegramUser } from "./telegram-auth";
 import { DEFAULT_CATEGORIES } from "@/lib/domain/constants";
 import { hasAccess } from "./access-rules";
+import { setRequestCurrency } from "./currency-context";
 
 export type AppUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
 
 export const getCurrentUser = cache(async () => {
+  const user = await findCurrentUser();
+  // Суммы на странице форматируются в валюте пользователя
+  if (user) setRequestCurrency(user.currency);
+  return user;
+});
+
+async function findCurrentUser() {
   const userId = await readSession();
   if (userId) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -22,7 +30,7 @@ export const getCurrentUser = cache(async () => {
     return upsertTelegramUser({ id: Number(devTelegramId), first_name: "Dev" }, { keepName: true });
   }
   return null;
-});
+}
 
 export async function requireUser() {
   const user = await getCurrentUser();

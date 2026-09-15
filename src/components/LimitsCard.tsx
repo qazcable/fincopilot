@@ -9,11 +9,13 @@ import { saveCategoryLimits } from "@/lib/actions/settings";
 import { limitProgress } from "@/lib/domain/limits";
 import { formatMoney, minorToInput, parseAmount } from "@/lib/domain/money";
 import { haptic } from "@/lib/client/telegram";
+import { useCurrency } from "./CurrencyProvider";
 import type { LimitsOverviewItem } from "@/lib/server/limits";
 
 const BAR_COLOR = { ok: "", warn: "var(--warning)", over: "var(--negative)" } as const;
 
 export function LimitsCard({ items, monthLabel }: { items: LimitsOverviewItem[]; monthLabel: string }) {
+  const { currency } = useCurrency();
   const [editing, setEditing] = useState(false);
   const withLimits = items.filter(item => item.limit !== null);
 
@@ -58,8 +60,8 @@ export function LimitsCard({ items, monthLabel }: { items: LimitsOverviewItem[];
                   </div>
                   <p className={clsx("mt-1.5 text-[12px]", progress.state === "over" ? "font-medium text-negative" : progress.state === "warn" ? "font-medium text-warning" : "text-muted")}>
                     {progress.state === "over"
-                      ? `Превышен на ${formatMoney(-progress.left)}`
-                      : `Осталось ${formatMoney(progress.left)} · ${progress.percent}%`}
+                      ? `Превышен на ${formatMoney(-progress.left, { currency })}`
+                      : `Осталось ${formatMoney(progress.left, { currency })} · ${progress.percent}%`}
                   </p>
                 </div>
               ))}
@@ -75,6 +77,7 @@ export function LimitsCard({ items, monthLabel }: { items: LimitsOverviewItem[];
 }
 
 function LimitsForm({ items, onDone }: { items: LimitsOverviewItem[]; onDone: () => void }) {
+  const { currency, symbol } = useCurrency();
   const [values, setValues] = useState<Record<string, string>>(
     Object.fromEntries(items.map(item => [item.id, minorToInput(item.limit)]))
   );
@@ -121,7 +124,7 @@ function LimitsForm({ items, onDone }: { items: LimitsOverviewItem[]; onDone: ()
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[15px] font-medium">{item.name}</span>
               <span className="block truncate text-[12px] text-muted">
-                {item.averageSpent > 0 ? `в среднем ${formatMoney(item.averageSpent)} в месяц` : item.spent > 0 ? `в этом месяце ${formatMoney(item.spent)}` : "трат пока не было"}
+                {item.averageSpent > 0 ? `в среднем ${formatMoney(item.averageSpent, { currency })} в месяц` : item.spent > 0 ? `в этом месяце ${formatMoney(item.spent, { currency })}` : "трат пока не было"}
               </span>
             </span>
             <input
@@ -129,7 +132,7 @@ function LimitsForm({ items, onDone }: { items: LimitsOverviewItem[]; onDone: ()
               onChange={event => setValues(v => ({ ...v, [item.id]: event.target.value }))}
               inputMode="decimal"
               placeholder="—"
-              aria-label={`Лимит «${item.name}», ₸`}
+              aria-label={`Лимит «${item.name}», ${symbol}`}
               className="tabular h-10 w-28 shrink-0 rounded-xl bg-surface px-3 text-right text-[16px] text-fg outline-none placeholder:text-faint focus:ring-2 focus:ring-accent/40"
             />
           </label>

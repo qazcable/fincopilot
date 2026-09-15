@@ -6,6 +6,7 @@ import { Card, Field, Money, Segmented, inputClass } from "./ui/primitives";
 import { simulatePayoff, simulateStrategy, type Debt } from "@/lib/domain/payoff";
 import { parseAmount } from "@/lib/domain/money";
 import { plural } from "@/lib/domain/dates";
+import { useCurrency } from "./CurrencyProvider";
 
 function monthsText(months: number) {
   const years = Math.floor(months / 12);
@@ -25,6 +26,7 @@ function amountOrZero(value: string) {
 
 /** Досрочное погашение одного кредита: доплата каждый месяц и/или разовый взнос */
 export function PayoffCalculator({ balance, ratePercent, monthlyPayment }: { balance: number; ratePercent: number; monthlyPayment: number }) {
+  const { symbol } = useCurrency();
   const [extra, setExtra] = useState("");
   const [lump, setLump] = useState("");
   const base = simulatePayoff(balance, ratePercent, monthlyPayment);
@@ -44,10 +46,10 @@ export function PayoffCalculator({ balance, ratePercent, monthlyPayment }: { bal
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Доплата в месяц, ₸">
+        <Field label={`Доплата в месяц, ${symbol}`}>
           <input value={extra} onChange={e => setExtra(e.target.value)} inputMode="decimal" placeholder="10 000" className={clsx(inputClass, "tabular")} />
         </Field>
-        <Field label="Разовый взнос, ₸">
+        <Field label={`Разовый взнос, ${symbol}`}>
           <input value={lump} onChange={e => setLump(e.target.value)} inputMode="decimal" placeholder="100 000" className={clsx(inputClass, "tabular")} />
         </Field>
       </div>
@@ -75,6 +77,7 @@ export function PayoffCalculator({ balance, ratePercent, monthlyPayment }: { bal
 
 /** Какой долг гасить первым: сравнение «сначала дорогой» и «сначала маленький» */
 export function DebtStrategy({ debts }: { debts: Debt[] }) {
+  const { symbol } = useCurrency();
   const [extra, setExtra] = useState("");
   const [strategy, setStrategy] = useState<"avalanche" | "snowball">("avalanche");
   const extraMinor = amountOrZero(extra);
@@ -89,7 +92,7 @@ export function DebtStrategy({ debts }: { debts: Debt[] }) {
         <p className="text-[16px] font-semibold">Как быстрее закрыть все долги</p>
         <p className="mt-0.5 text-[13px] leading-snug text-muted">Платите минимум по всем, а свободные деньги — на один долг. Когда он закрыт, его платёж идёт на следующий.</p>
       </div>
-      <Field label="Сколько можете доплачивать в месяц, ₸">
+      <Field label={`Сколько можете доплачивать в месяц, ${symbol}`}>
         <input value={extra} onChange={e => setExtra(e.target.value)} inputMode="decimal" placeholder="20 000" className={clsx(inputClass, "tabular")} />
       </Field>
       <Segmented

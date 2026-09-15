@@ -1,7 +1,25 @@
 // Автоматическая запись операций: оплаты Apple Wallet и SMS банков (через автоматизации «Команд» iPhone)
 import { BANKS, type BankCode } from "./statements";
+import type { CurrencyCode } from "./currency";
 
-export type AutoAmount = { amount: number; currency: "KZT" | "OTHER" };
+// Валюта суммы из Wallet: null — в строке валюты нет (считаем валютой пользователя)
+export type AutoAmount = { amount: number; currency: CurrencyCode | "OTHER" | null };
+
+const CURRENCY_MARKERS: [RegExp, CurrencyCode][] = [
+  [/₸|KZT|тг|тенге/i, "KZT"],
+  [/\$|USD/i, "USD"],
+  [/€|EUR/i, "EUR"],
+  [/₽|RUB|руб/i, "RUB"],
+  [/£|GBP/i, "GBP"],
+  [/¥|CNY/i, "CNY"],
+  [/₺|TRY/i, "TRY"],
+  [/KGS|сом/i, "KGS"],
+  [/UZS|сўм|сум/i, "UZS"],
+  [/AED/i, "AED"],
+  [/₾|GEL/i, "GEL"],
+  [/₼|AZN/i, "AZN"],
+  [/BYN/i, "BYN"],
+];
 
 /**
  * Сумма транзакции Wallet приходит строкой в формате региона телефона: «1 300,00 ₸», «₸1,300.00», «1300 KZT», «$23.20».
@@ -9,7 +27,7 @@ export type AutoAmount = { amount: number; currency: "KZT" | "OTHER" };
  */
 export function parseWalletAmount(raw: string): AutoAmount | null {
   const text = raw.replace(/[  ]/g, " ").trim();
-  const currency = /₸|KZT|тг|тенге/i.test(text) || !/[$€£₽]|USD|EUR|RUB|GBP/i.test(text) ? "KZT" : "OTHER";
+  const currency = CURRENCY_MARKERS.find(([marker]) => marker.test(text))?.[1] ?? (/[A-Z]{3}/.test(text) ? "OTHER" : null);
   const digits = text.replace(/[^\d.,\s-]/g, "").trim().replace(/\s+/g, "");
   if (!/\d/.test(digits)) return null;
 

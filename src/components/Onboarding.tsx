@@ -7,19 +7,24 @@ import { AmountDisplay, Keypad, inputToMinor } from "./AmountInput";
 import { Button } from "./ui/primitives";
 import { completeOnboarding } from "@/lib/actions/settings";
 import { haptic } from "@/lib/client/telegram";
+import { CURRENCIES, CURRENCY_CODES, type CurrencyCode } from "@/lib/domain/currency";
+import { CurrencyProvider, useCurrency } from "./CurrencyProvider";
 
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
+
+const ONBOARDING_CURRENCIES: CurrencyCode[] = ["KZT", "USD", "EUR", "RUB", "KGS", "UZS"];
 
 export function Onboarding({ firstName }: { firstName: string | null }) {
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [balance, setBalance] = useState("");
+  const [currency, setCurrency] = useState<CurrencyCode>(useCurrency().currency);
   const [incomeDay, setIncomeDay] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function finish(day: number | null) {
     startTransition(async () => {
-      const result = await completeOnboarding({ balance: inputToMinor(balance), incomeDay: day, incomeAmount: null });
+      const result = await completeOnboarding({ balance: inputToMinor(balance), incomeDay: day, incomeAmount: null, currency });
       if (result.ok) haptic.success();
       else setError(result.error);
     });
@@ -61,8 +66,39 @@ export function Onboarding({ firstName }: { firstName: string | null }) {
         <section key="balance" className="animate-rise-in flex flex-1 flex-col">
           <h1 className="mt-4 text-[26px] font-bold tracking-tight">Сколько сейчас на карте?</h1>
           <p className="mt-1 text-[15px] text-muted">Текущий баланс основной карты. Потом добавите другие счета.</p>
+
+          {/* Валюта учёта — выбирается один раз, потом меняется в настройках */}
+          <div className="no-scrollbar -mx-5 mt-4 flex gap-2 overflow-x-auto px-5">
+            {ONBOARDING_CURRENCIES.map(code => (
+              <button
+                key={code}
+                type="button"
+                onClick={() => { haptic.select(); setCurrency(code); }}
+                className={clsx(
+                  "pressable shrink-0 rounded-full px-3.5 py-2 text-[14px] font-medium",
+                  currency === code ? "bg-accent text-accent-fg" : "bg-surface text-muted"
+                )}
+              >
+                {CURRENCIES[code].flag} {code}
+              </button>
+            ))}
+            <select
+              value={ONBOARDING_CURRENCIES.includes(currency) ? "" : currency}
+              onChange={e => e.target.value && setCurrency(e.target.value as CurrencyCode)}
+              aria-label="Другая валюта"
+              className="shrink-0 rounded-full bg-surface px-3 py-2 text-[14px] text-muted outline-none"
+            >
+              <option value="">Другая…</option>
+              {CURRENCY_CODES.filter(code => !ONBOARDING_CURRENCIES.includes(code)).map(code => (
+                <option key={code} value={code}>{CURRENCIES[code].flag} {code}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex flex-1 items-center justify-center">
-            <AmountDisplay value={balance} tone="EXPENSE" />
+            <CurrencyProvider currency={currency} secondary={null} rates={[]} ratesDate={null}>
+              <AmountDisplay value={balance} tone="EXPENSE" />
+            </CurrencyProvider>
           </div>
           <div className="space-y-3">
             <Keypad value={balance} onChange={setBalance} />

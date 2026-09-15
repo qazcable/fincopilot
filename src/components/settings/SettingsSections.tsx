@@ -6,12 +6,14 @@ import { Check, ChevronRight, Copy, KeyRound, Plus } from "lucide-react";
 import { Sheet } from "../ui/Sheet";
 import { Button, Field, Money, SectionHeader, Segmented, Switch, inputClass } from "../ui/primitives";
 import {
-  archiveAccount, createShortcutKey, deleteIncome, removeShortcutKey, saveAccount, saveIncome, savePreferences, setDefaultAccount,
+  archiveAccount, createShortcutKey, deleteIncome, removeShortcutKey, saveAccount, saveCurrency, saveIncome, savePreferences, setDefaultAccount,
 } from "@/lib/actions/settings";
 import type { ActionResult } from "@/lib/actions/transactions";
 import { ACCOUNT_KINDS, type AccountKind } from "@/lib/domain/constants";
+import { CURRENCIES, CURRENCY_CODES, type CurrencyCode } from "@/lib/domain/currency";
 import { minorToInput, parseAmount } from "@/lib/domain/money";
 import { haptic } from "@/lib/client/telegram";
+import { useCurrency } from "../CurrencyProvider";
 import type { AccountDto } from "@/lib/server/queries";
 
 function useAction() {
@@ -89,6 +91,7 @@ export function AccountsSection({ accounts }: { accounts: AccountDto[] }) {
 }
 
 function AccountForm({ account, canArchive, onDone }: { account: AccountDto | null; canArchive: boolean; onDone: () => void }) {
+  const { symbol } = useCurrency();
   const [name, setName] = useState(account?.name ?? "");
   const [kind, setKind] = useState<AccountKind>((account?.kind as AccountKind) ?? "CARD");
   const [balance, setBalance] = useState(account ? (account.balance < 0 ? "-" : "") + minorToInput(Math.abs(account.balance)) : "");
@@ -110,7 +113,7 @@ function AccountForm({ account, canArchive, onDone }: { account: AccountDto | nu
       <Field label="Название">
         <input value={name} onChange={e => setName(e.target.value)} placeholder="Kaspi Gold" maxLength={40} className={inputClass} />
       </Field>
-      <Field label="Текущий баланс, ₸" hint={account ? "Изменение не трогает историю — это корректировка остатка" : undefined}>
+      <Field label={`Текущий баланс, ${symbol}`} hint={account ? "Изменение не трогает историю — это корректировка остатка" : undefined}>
         <input value={balance} onChange={e => setBalance(e.target.value)} inputMode="decimal" placeholder="0" className={clsx(inputClass, "tabular")} />
       </Field>
       <div className="flex items-center justify-between gap-4 rounded-2xl bg-surface-2 px-4 py-3">
@@ -170,6 +173,7 @@ export function IncomesSection({ incomes }: { incomes: IncomeDto[] }) {
 }
 
 function IncomeForm({ income, onDone }: { income: IncomeDto | null; onDone: () => void }) {
+  const { symbol } = useCurrency();
   const [title, setTitle] = useState(income?.title ?? "Зарплата");
   const [day, setDay] = useState(income?.dayOfMonth ?? 10);
   const [amount, setAmount] = useState(minorToInput(income?.amount));
@@ -196,7 +200,7 @@ function IncomeForm({ income, onDone }: { income: IncomeDto | null; onDone: () =
           ))}
         </div>
       </Field>
-      <Field label="Сумма, ₸" hint="Необязательно — для справки">
+      <Field label={`Сумма, ${symbol}`} hint="Необязательно — для справки">
         <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="350 000" className={clsx(inputClass, "tabular")} />
       </Field>
       {(error || removal.error) && <p className="text-center text-[14px] text-negative">{error || removal.error}</p>}
@@ -236,6 +240,7 @@ const NOTIFICATIONS: { key: "morningDigest" | "eveningDigest" | "weeklyDigest" |
 ];
 
 export function PreferencesSection(initial: Preferences) {
+  const { symbol } = useCurrency();
   const [prefs, setPrefs] = useState(initial);
   const [cushionInput, setCushionInput] = useState(initial.cushion ? minorToInput(initial.cushion) : "");
   const [saved, setSaved] = useState(false);
@@ -274,7 +279,7 @@ export function PreferencesSection(initial: Preferences) {
         <SectionHeader title="Бюджет" />
         <div className="divide-y divide-line overflow-hidden rounded-3xl bg-surface shadow-card">
           <div className="px-4 py-3.5">
-            <Field label="Неприкосновенный запас, ₸" hint="Эта сумма не попадёт в лимит на день">
+            <Field label={`Неприкосновенный запас, ${symbol}`} hint="Эта сумма не попадёт в лимит на день">
               <div className="flex gap-2">
                 <input value={cushionInput} onChange={e => { setSaved(false); setCushionInput(e.target.value); }} inputMode="decimal" placeholder="0" className={clsx(inputClass, "tabular")} />
                 <Button variant="soft" className="h-12 shrink-0" loading={pending} onClick={() => save({})} aria-label="Сохранить запас">
@@ -295,6 +300,75 @@ export function PreferencesSection(initial: Preferences) {
     </>
   );
 }
+// ── Валюта ────────────────────────────────────────────────
+
+export function CurrencySection({ currency, secondary, ratesDate }: { currency: string; secondary: string | null; ratesDate: string | null }) {
+  const [value, setValue] = useState({ currency, secondary });
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const { pending, error, run } = useAction();
+
+  function save(next: { currency: string; secondary: string | null }) {
+    setValue(next);
+    run(() => saveCurrency(next));
+  }
+
+  return (
+    <section id="currency">
+      <SectionHeader title="Валюта" help="currency" />
+      <div className="divide-y divide-line overflow-hidden rounded-3xl bg-surface shadow-card">
+        <label className="flex items-center justify-between gap-4 px-4 py-3.5">
+          <span>
+            <span className="block text-[15px] font-medium">Основная валюта</span>
+            <span className="block text-[13px] text-muted">В ней ведётся учёт</span>
+          </span>
+          <select
+            value={value.currency}
+            disabled={pending}
+            onChange={e => setConfirm(e.target.value)}
+            className="max-w-[50%] bg-transparent text-right text-[15px] text-muted outline-none"
+          >
+            {CURRENCY_CODES.map(code => <option key={code} value={code}>{CURRENCIES[code].flag} {code} — {CURRENCIES[code].short}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center justify-between gap-4 px-4 py-3.5">
+          <span>
+            <span className="block text-[15px] font-medium">Показывать также в</span>
+            <span className="block text-[13px] text-muted">≈ сумма по курсу Нацбанка</span>
+          </span>
+          <select
+            value={value.secondary ?? ""}
+            disabled={pending}
+            onChange={e => save({ currency: value.currency, secondary: e.target.value || null })}
+            className="max-w-[50%] bg-transparent text-right text-[15px] text-muted outline-none"
+          >
+            <option value="">Не показывать</option>
+            {CURRENCY_CODES.filter(code => code !== value.currency).map(code => <option key={code} value={code}>{CURRENCIES[code].flag} {code}</option>)}
+          </select>
+        </label>
+        <a href="/rates" className="pressable flex items-center justify-between px-4 py-3.5 text-[15px] font-medium text-accent">
+          Курсы Нацбанка РК{ratesDate ? ` на ${ratesDate.split("-").reverse().join(".")}` : ""}
+          <ChevronRight className="size-4" />
+        </a>
+      </div>
+      {error && <p className="mt-2 text-center text-[14px] text-negative">{error}</p>}
+
+      <Sheet open={confirm !== null} onClose={() => setConfirm(null)} title="Сменить основную валюту?">
+        {confirm && (
+          <div className="space-y-4">
+            <p className="text-[15px] leading-snug text-muted">
+              Все суммы будут показываться в {CURRENCIES[confirm as CurrencyCode].short}. Уже внесённые суммы <b className="text-fg">не пересчитываются</b> — меняется только валюта в подписях. Удобно, если вы только начинаете учёт.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" size="lg" onClick={() => setConfirm(null)}>Отмена</Button>
+              <Button size="lg" onClick={() => { save({ currency: confirm, secondary: value.secondary === confirm ? null : value.secondary }); setConfirm(null); }}>Сменить</Button>
+            </div>
+          </div>
+        )}
+      </Sheet>
+    </section>
+  );
+}
+
 // ── Быстрая команда iPhone ────────────────────────────────
 
 export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string | null; endpoint: string }) {

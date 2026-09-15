@@ -15,7 +15,7 @@ import { DEBT_CATEGORY_KEY, type TxSource } from "@/lib/domain/constants";
 // Не больше 20 обращений к ИИ в минуту на пользователя
 const AI_LIMIT = { count: 20, windowMs: 60_000 };
 
-type CaptureUser = { id: string; timezone: string };
+type CaptureUser = { id: string; timezone: string; currency?: string };
 
 export type CapturedItem = { transactionId: string; linkedPaymentTitle: string | null };
 
@@ -150,7 +150,7 @@ export async function captureWallet(user: CaptureUser, data: { amount: string; m
   const parsed = parseWalletAmount(data.amount);
   if (!parsed) return { ok: false, reason: "bad_amount" };
   // Покупки в валюте точнее придут из выписки — там сумма в тенге после конвертации
-  if (parsed.currency !== "KZT") return { ok: false, reason: "foreign_currency" };
+  if (parsed.currency !== null && parsed.currency !== (user.currency ?? "KZT")) return { ok: false, reason: "foreign_currency" };
   const note = (data.merchant ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || "Оплата картой";
   const account = data.card ? accountForCard(data.card, await accounts(user.id)) : null;
   return saveAuto(user, { amount: parsed.amount, kind: "EXPENSE", note, accountId: account?.id ?? null }, "WALLET", `Apple Wallet: ${data.card ?? ""} ${data.amount}`.trim());

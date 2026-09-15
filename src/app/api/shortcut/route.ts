@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findUserByApiKey } from "@/lib/server/api-key";
+import { runWithCurrency } from "@/lib/server/currency-context";
 import { captureAudio, captureSms, captureText, captureWallet } from "@/lib/server/capture";
 import { buildMultiReceipt, buildReceipt } from "@/lib/server/receipt";
 import { errorMessage, getBot, isBotConfigured, sendReceipts } from "@/lib/server/bot";
@@ -19,7 +20,11 @@ function text(body: string, status = 200) {
 export async function POST(req: NextRequest) {
   const user = await findUserByApiKey(req.headers.get("authorization"));
   if (!user) return text("Неверный ключ. Создайте новый в настройках FinCopilot.", 401);
+  // Суммы в ответе и чеках — в валюте пользователя
+  return runWithCurrency(user.currency, () => handle(req, user));
+}
 
+async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typeof findUserByApiKey>>>) {
   const contentType = req.headers.get("content-type") ?? "";
   let result;
 

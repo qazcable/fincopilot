@@ -10,12 +10,13 @@ import { formatDayKey } from "@/lib/domain/dates";
 import { minorToInput, parseAmount } from "@/lib/domain/money";
 import type { GoalSummary } from "@/lib/domain/goals";
 import { haptic } from "@/lib/client/telegram";
+import { useCurrency } from "./CurrencyProvider";
 
 export type GoalAccount = { id: string; name: string; balance: number };
 
 const EMOJIS = ["🎯", "🏦", "🛟", "🏠", "🚗", "✈️", "🎓", "📱", "💍", "🎁"];
 
-export function goalPlanText(goal: GoalSummary, today: string) {
+export function goalPlanText(goal: GoalSummary, today: string, symbol: string) {
   switch (goal.plan.status) {
     case "done": return "Цель достигнута 🎉";
     case "no_deadline": return "Без срока — откладывайте сколько получится";
@@ -25,7 +26,7 @@ export function goalPlanText(goal: GoalSummary, today: string) {
       return payments === 1
         ? `Отложить до ${formatDayKey(goal.targetDate!, today).toLowerCase()}`
         // План на период не «плывёт» после перевода внутри периода
-        : `${formatPlain(goal.plannedThisPeriod || goal.plan.perIncome)} ₸ с каждой зарплаты`;
+        : `${formatPlain(goal.plannedThisPeriod || goal.plan.perIncome)} ${symbol} с каждой зарплаты`;
     }
   }
 }
@@ -36,13 +37,14 @@ function formatPlain(minor: number) {
 
 export function GoalProgress({ goal, today, compact = false }: { goal: GoalSummary; today: string; compact?: boolean }) {
   const done = goal.plan.status === "done";
+  const { symbol } = useCurrency();
   return (
     <div>
       <div className="flex items-center gap-3">
         <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-xl" aria-hidden>{goal.emoji}</span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[16px] font-semibold">{goal.title}</p>
-          <p className="truncate text-[13px] text-muted">{goalPlanText(goal, today)}</p>
+          <p className="truncate text-[13px] text-muted">{goalPlanText(goal, today, symbol)}</p>
         </div>
         <span className={clsx("text-[15px] font-bold tabular", done ? "text-positive" : "text-fg")}>{goal.percent}%</span>
       </div>
@@ -79,7 +81,7 @@ export function GoalsBoard({
       <div className="space-y-6 px-4">
         {goals.length === 0 ? (
           <Card>
-            <EmptyState emoji="🎯" title="Поставьте первую цель" text="Например, «Подушка на депозите — 1 000 000 ₸ к декабрю». Я посчитаю, сколько откладывать с каждой зарплаты, и учту это в лимите на день.">
+            <EmptyState emoji="🎯" title="Поставьте первую цель" text="Например, «Подушка на депозите — 1 000 000 к декабрю». Я посчитаю, сколько откладывать с каждой зарплаты, и учту это в лимите на день.">
               <Button onClick={() => open("new")}>Создать цель</Button>
             </EmptyState>
           </Card>
@@ -116,6 +118,7 @@ export function GoalsBoard({
 }
 
 function GoalForm({ goal, accounts, today, onDone }: { goal: GoalSummary | null; accounts: GoalAccount[]; today: string; onDone: () => void }) {
+  const { symbol } = useCurrency();
   const [emoji, setEmoji] = useState(goal?.emoji ?? "🎯");
   const [title, setTitle] = useState(goal?.title ?? "");
   const [target, setTarget] = useState(minorToInput(goal?.targetAmount));
@@ -197,7 +200,7 @@ function GoalForm({ goal, accounts, today, onDone }: { goal: GoalSummary | null;
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Подушка безопасности" maxLength={60} className={inputClass} />
       </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Сумма, ₸">
+        <Field label={`Сумма, ${symbol}`}>
           <input value={target} onChange={e => setTarget(e.target.value)} inputMode="decimal" placeholder="1 000 000" className={clsx(inputClass, "tabular")} />
         </Field>
         <Field label="К дате" hint="Необязательно">
@@ -233,7 +236,7 @@ function GoalForm({ goal, accounts, today, onDone }: { goal: GoalSummary | null;
           <Field label="Название счёта">
             <input value={newName} onChange={e => setNewName(e.target.value)} maxLength={40} className={inputClass} />
           </Field>
-          <Field label="Уже накоплено, ₸">
+          <Field label={`Уже накоплено, ${symbol}`}>
             <input value={newBalance} onChange={e => setNewBalance(e.target.value)} inputMode="decimal" placeholder="0" className={clsx(inputClass, "tabular")} />
           </Field>
         </div>

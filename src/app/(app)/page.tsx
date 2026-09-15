@@ -12,6 +12,9 @@ import { PaymentRow } from "@/components/PaymentRow";
 import { TransactionList } from "@/components/TransactionList";
 import { GoalProgress } from "@/components/GoalsBoard";
 import { FeedbackButton } from "@/components/settings/CommunitySections";
+import { ApproxMoney } from "@/components/CurrencyProvider";
+import { getNbkRates } from "@/lib/server/rates";
+import { CURRENCIES, isCurrencyCode } from "@/lib/domain/currency";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
 import { Card, EmptyState, Money, SectionHeader } from "@/components/ui/primitives";
 import { capitalize, formatDayKey, plural, weekdayOf } from "@/lib/domain/dates";
@@ -30,7 +33,10 @@ function greeting(hour: number) {
 
 export default async function HomePage() {
   const user = await requireUser();
-  const [data, forecast] = await Promise.all([getHomeData(user), getForecast(user)]);
+  const [data, forecast, nbk] = await Promise.all([getHomeData(user), getForecast(user), getNbkRates()]);
+  // Курс для главной: второй валюты пользователя, иначе доллара (для тенге — прямо из Нацбанка)
+  const rateCode = user.secondaryCurrency && user.secondaryCurrency !== "KZT" ? user.secondaryCurrency : "USD";
+  const headlineRate = nbk.rates.find(r => r.code === rateCode);
   const headline = forecastHeadline(forecast, forecast.today, formatMoney, day => formatDayKey(day));
   const weekday = weekdayOf(data.today);
 
@@ -113,6 +119,7 @@ export default async function HomePage() {
             <Card className="h-full p-4">
               <p className="text-[13px] font-medium text-muted">На счетах</p>
               <Money value={data.totalBalance} className="mt-1 block text-[20px] font-bold tracking-tight" />
+              <ApproxMoney value={data.totalBalance} />
               <p className="mt-0.5 truncate text-[12px] text-faint">
                 {data.accounts.length === 1 ? data.accounts[0].name : `${data.accounts.length} ${plural(data.accounts.length, "счёт", "счёта", "счетов")}`}
               </p>
@@ -126,6 +133,22 @@ export default async function HomePage() {
             </Card>
           </Link>
         </div>
+
+        {headlineRate && (
+          <Link href="/rates" className="pressable flex items-center gap-3 rounded-3xl bg-surface px-4 py-3 shadow-card">
+            <span className="text-xl" aria-hidden>{isCurrencyCode(rateCode) ? CURRENCIES[rateCode].flag : "💱"}</span>
+            <span className="min-w-0 flex-1 text-[14px]">
+              <span className="text-muted">Курс Нацбанка: </span>
+              <span className="font-semibold tabular">1 {rateCode} = {headlineRate.rate.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸</span>
+            </span>
+            {headlineRate.direction !== "SAME" && (
+              <span className={clsx("text-[12px] font-medium tabular", headlineRate.direction === "UP" ? "text-negative" : "text-positive")}>
+                {headlineRate.direction === "UP" ? "▲" : "▼"} {Math.abs(headlineRate.change).toLocaleString("ru-RU", { maximumFractionDigits: 2 })}
+              </span>
+            )}
+            <ChevronRight className="size-4 shrink-0 text-faint" />
+          </Link>
+        )}
 
         <section>
           <SectionHeader title="Цели" help="goals" href="/goals" action={data.goals.length > 0 ? "Все" : "Создать"} />

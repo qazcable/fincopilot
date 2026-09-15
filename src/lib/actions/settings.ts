@@ -9,6 +9,7 @@ import { revokeApiKey, rotateApiKey } from "@/lib/server/api-key";
 import { isValidTimeZone } from "@/lib/domain/dates";
 import { MAX_AMOUNT_MINOR, toDb } from "@/lib/domain/money";
 import { ACCOUNT_KINDS } from "@/lib/domain/constants";
+import { isCurrencyCode } from "@/lib/domain/currency";
 import type { ActionResult } from "./transactions";
 
 const balance = z.number().int().min(-MAX_AMOUNT_MINOR).max(MAX_AMOUNT_MINOR);
@@ -22,13 +23,14 @@ const onboardingSchema = z.object({
   balance,
   incomeDay: z.number().int().min(1).max(31).nullable(),
   incomeAmount: z.number().int().positive().max(MAX_AMOUNT_MINOR).nullable(),
+  currency: z.string().optional(),
 });
 
 export async function completeOnboarding(input: z.infer<typeof onboardingSchema>): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = onboardingSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Проверьте данные" };
-  const { balance: startBalance, incomeDay, incomeAmount } = parsed.data;
+  const { balance: startBalance, incomeDay, incomeAmount, currency } = parsed.data;
 
   await prisma.$transaction(async tx => {
     const current = (await getAccountBalances(user.id, tx)).find(a => a.isDefault);
@@ -48,7 +50,9 @@ export async function completeOnboarding(input: z.infer<typeof onboardingSchema>
         data: { userId: user.id, title: "Зарплата", dayOfMonth: incomeDay, amount: incomeAmount ? toDb(incomeAmount) : null },
       });
     }
-    await tx.user.update({ where: { id: user.id }, data: { onboardedAt: new Date() } });
+    // Для тенге по умолчанию показываем и доллары; для других валют — без второй валюты
+    const currencyData = isCurrencyCode(currency) ? { currency, secondaryCurrency: currency === "KZT" ? "USD" : "KZT" } : {};
+    await tx.user.update({ where: { id: user.id }, data: { onboardedAt: new Date(), ...currencyData } });
   });
   return done();
 }
@@ -158,6 +162,16 @@ export async function savePreferences(input: z.infer<typeof preferencesSchema>):
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Проверьте поля" };
   const { cushion, ...flags } = parsed.data;
   await prisma.user.update({ where: { id: user.id }, data: { ...flags, cushion: toDb(cushion) } });
+  return done();
+}
+
+/** Основная валюта учёта и валюта для пересчёта. Суммы не конвертируются — меняются только подписи */
+export async function saveCurrency(input: { currency: string; secondary: string | null }): Promise<ActionResult> {
+  const user = await requireUser();
+  const currency = String(input?.currency);
+  const secondary = input?.secondary == null ? null : String(input.secondary);
+  if (!isCurrencyCode(currency) || (secondary !== null && !isCurrencyCode(secondary))) return { ok: false, error: "Неизвестная валюта" };
+  await prisma.user.update({ where: { id: user.id }, data: { currency, secondaryCurrency: secondary === currency ? null : secondary } });
   return done();
 }
 

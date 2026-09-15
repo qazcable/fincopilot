@@ -4,7 +4,7 @@ import { useId, useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ForecastDay } from "@/lib/domain/forecast";
 import { formatDayKey, weekdayOf } from "@/lib/domain/dates";
-import { formatMoney } from "@/lib/domain/money";
+import { useCurrency } from "./CurrencyProvider";
 import { haptic } from "@/lib/client/telegram";
 
 const W = 360;
@@ -21,6 +21,7 @@ function compact(minor: number) {
 }
 
 export function ForecastChart({ points, today, gapStart }: { points: ForecastDay[]; today: string; gapStart: string | null }) {
+  const { format, symbol, approx } = useCurrency();
   const clipId = useId();
   const [active, setActive] = useState<number | null>(null);
 
@@ -63,10 +64,10 @@ export function ForecastChart({ points, today, gapStart }: { points: ForecastDay
             <div className="min-w-0">
               <p className="text-[12px] font-medium text-muted">{formatDayKey(point.day, today)}, {weekdayOf(point.day)}</p>
               <p className="truncate text-[12px] text-muted">
-                {point.events.length > 0 ? point.events.map(e => `${e.title} ${formatMoney(e.amount, { sign: true })}`).join(" · ") : "Обычные траты"}
+                {point.events.length > 0 ? point.events.map(e => `${e.title} ${format(e.amount, { sign: true })}`).join(" · ") : "Обычные траты"}
               </p>
             </div>
-            <p className={clsx("shrink-0 text-[18px] font-bold tabular", point.balance < 0 ? "text-negative" : "text-fg")}>{formatMoney(point.balance)}</p>
+            <p className={clsx("shrink-0 text-[18px] font-bold tabular", point.balance < 0 ? "text-negative" : "text-fg")}>{format(point.balance)}<span className="block text-right text-[11px] font-normal text-muted">{approx(point.balance)}</span></p>
           </>
         ) : (
           <p className="text-[12px] text-faint">Проведите по графику, чтобы увидеть остаток на любой день</p>
@@ -89,7 +90,7 @@ export function ForecastChart({ points, today, gapStart }: { points: ForecastDay
 
         {/* Нулевая линия */}
         <line x1={PAD.left} x2={W - PAD.right} y1={geometry.zero} y2={geometry.zero} stroke="var(--faint)" strokeWidth="1" strokeDasharray="3 3" />
-        <text x={W - PAD.right} y={geometry.zero - 4} textAnchor="end" fontSize="9" fill="var(--faint)">0 ₸</text>
+        <text x={W - PAD.right} y={geometry.zero - 4} textAnchor="end" fontSize="9" fill="var(--faint)">0 {symbol}</text>
         {geometry.max > 0 && <text x={PAD.left} y={PAD.top - 5} fontSize="9" fill="var(--faint)">{compact(geometry.max)}</text>}
 
         {/* Выше нуля — цвет приложения, ниже — дефицит */}

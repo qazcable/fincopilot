@@ -10,6 +10,7 @@ import { deleteObligation, saveObligation } from "@/lib/actions/payments";
 import { OBLIGATION_KINDS, type ObligationKind } from "@/lib/domain/constants";
 import { minorToInput, parseAmount } from "@/lib/domain/money";
 import { haptic } from "@/lib/client/telegram";
+import { useCurrency } from "./CurrencyProvider";
 
 export type ObligationFormValues = {
   id?: string;
@@ -31,6 +32,7 @@ const PLACEHOLDERS: Record<ObligationKind, string> = {
 };
 
 export function ObligationForm({ initial }: { initial?: ObligationFormValues }) {
+  const { symbol } = useCurrency();
   const router = useRouter();
   const [kind, setKind] = useState<ObligationKind>(initial?.kind ?? "LOAN");
   const [title, setTitle] = useState(initial?.title ?? "");
@@ -129,7 +131,7 @@ export function ObligationForm({ initial }: { initial?: ObligationFormValues }) 
           <input value={title} onChange={e => setTitle(e.target.value)} placeholder={PLACEHOLDERS[kind]} maxLength={60} className={inputClass} />
         </Field>
         <div className="grid grid-cols-[1fr_7rem] gap-3">
-          <Field label="Платёж в месяц, ₸">
+          <Field label={`Платёж в месяц, ${symbol}`}>
             <input value={monthly} onChange={e => setMonthly(e.target.value)} inputMode="decimal" placeholder="25 000" className={clsx(inputClass, "tabular")} />
           </Field>
           <Field label="Число">

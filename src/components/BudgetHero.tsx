@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { ChevronRight } from "lucide-react";
 import { Money } from "./ui/primitives";
 import { HelpLink } from "./GuideList";
+import { ApproxMoney } from "./CurrencyProvider";
 import type { BudgetResult } from "@/lib/domain/budget";
 import { formatDayKey, pluralDays } from "@/lib/domain/dates";
 
@@ -41,6 +42,7 @@ export function BudgetHero({
         className={clsx("relative mt-2 block text-[46px] font-bold leading-none tracking-tight", (shortfall || budget.leftToday < 0) && "text-negative")}
         currencyClassName="text-[0.55em] text-faint"
       />
+      <ApproxMoney value={shortfall ? budget.free : budget.leftToday} className="relative mt-1.5 block text-[14px] text-muted tabular" />
 
       <div className="relative mt-5">
         <div className="h-2 overflow-hidden rounded-full bg-surface-2">

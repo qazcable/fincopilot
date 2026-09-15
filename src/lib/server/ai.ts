@@ -1,7 +1,8 @@
 import "server-only";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { z } from "zod";
-import { MAX_AMOUNT_MINOR, MINOR_PER_UNIT } from "@/lib/domain/money";
+import { MAX_AMOUNT_MINOR, MINOR_PER_UNIT, currentCurrency } from "@/lib/domain/money";
+import { CURRENCIES, type CurrencyCode } from "@/lib/domain/currency";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
@@ -38,7 +39,7 @@ const MAX_OPERATIONS = 15;
 
 /**
  * Разбор свободного текста или голосового в операции: одно сообщение может содержать несколько трат
- * («кофе 1200, такси 1500 и продукты 8 тысяч»). Суммы в ответе — в тенге, возвращаем тиыны.
+ * («кофе 1200, такси 1500 и продукты 8 тысяч»). Суммы в ответе — в валюте пользователя, возвращаем минимальные единицы (тиыны, центы).
  */
 export async function parseWithAi(
   input: { text: string } | { audio: Buffer; mimeType: string },
@@ -52,7 +53,7 @@ export async function parseWithAi(
 Извлеки ВСЕ операции из сообщения — их может быть несколько («потратил 1200 на кофе, 1500 на такси и 8 тысяч на продукты» — это три операции).
 Каждая названная сумма — отдельная операция со своей категорией. Не объединяй разные траты в одну и не пропускай ни одной.
 Если сказано «два кофе по 1200» — это одна операция на 2400. Итоговую сумму («всего вышло 10 700»), если она просто суммирует перечисленное, отдельной операцией не добавляй.
-Валюта по умолчанию — тенге (₸). "2.5к", "две с половиной тысячи" = 2500.
+Валюта по умолчанию — ${CURRENCIES[currentCurrency()].name} (${CURRENCIES[currentCurrency()].symbol}). "2.5к", "две с половиной тысячи" = 2500.
 kind: EXPENSE — трата, INCOME — поступление (зарплата, перевод мне, кэшбэк).
 categoryId: выбери ровно один id из списка, подходящий по kind:
 ${categoryList}
@@ -108,14 +109,14 @@ confidence: 0..1 для каждой операции. Если сумма не 
   });
 }
 
-const ADVISOR_INSTRUCTION = `Ты — личный финансовый советник в приложении FinCopilot. Пользователь живёт в Казахстане, валюта — тенге (₸).
+const advisorInstruction = (currency: CurrencyCode) => `Ты — личный финансовый советник в приложении FinCopilot (сделано в Казахстане). Основная валюта пользователя — ${CURRENCIES[currency].name} (${CURRENCIES[currency].symbol}): все суммы в данных — в ней.
 В сообщении есть блок «ДАННЫЕ» — сводка его финансов, посчитанная приложением. Это единственный источник цифр.
 
 Правила:
 - Отвечай по-русски, дружелюбно и по делу. Обычно 60–180 слов; подробнее — только если просят.
 - Опирайся на конкретные цифры из данных. Не выдумывай суммы и операции. Если данных не хватает — так и скажи и подскажи, что внести.
 - Готовые расчёты (лимит на день, план по целям, срок и переплата по кредитам) бери из данных, не пересчитывай по-своему.
-- Советы — практичные и измеримые: «сократить кафе с 60 000 до 40 000 ₸ в месяц», а не «тратьте меньше».
+- Советы — практичные и измеримые: «сократить кафе с 60 000 до 40 000 ${CURRENCIES[currency].symbol} в месяц», а не «тратьте меньше».
 - Формат: короткие абзацы, списки через «• », выделение **жирным**. Без таблиц и заголовков.
 - Про покупку конкретных акций, валюты, криптовалюты и других инвестиций не давай персональных рекомендаций: объясни общие принципы и скажи, что ты не лицензированный финансовый консультант.
 - Если вопрос не про деньги — коротко ответь и мягко верни разговор к финансам.`;
@@ -135,7 +136,7 @@ export async function askAdvisorAi(context: string, history: AdvisorTurn[], ques
     model: MODEL,
     contents,
     // Советы требуют рассуждений — здесь размышления средние, а не минимальные
-    config: { systemInstruction: ADVISOR_INSTRUCTION, thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }, maxOutputTokens: 8192 },
+    config: { systemInstruction: advisorInstruction(currentCurrency()), thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }, maxOutputTokens: 8192 },
   }));
   return response.text?.trim() || null;
 }

@@ -6,6 +6,7 @@ import { getLimitsOverview } from "@/lib/server/limits";
 import { LimitsCard } from "@/components/LimitsCard";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { Donut } from "@/components/Donut";
+import { ApproxMoney } from "@/components/CurrencyProvider";
 import { Card, CategoryIcon, EmptyState, Money, PageHeader } from "@/components/ui/primitives";
 import { daysInMonth, makeKey, monthName, parseKey } from "@/lib/domain/dates";
 
@@ -45,6 +46,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
               <Donut segments={stats.categories.map(c => ({ value: c.total, color: c.category?.color ?? "#A1A1AA" }))}>
                 <span className="text-[13px] text-muted">Потрачено</span>
                 <Money value={stats.expense} className="text-[22px] font-bold tracking-tight" />
+                <ApproxMoney value={stats.expense} />
                 {delta !== null && (
                   <span className={clsx("mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold", delta > 0 ? "bg-negative-soft text-negative" : "bg-positive-soft text-positive")}>
                     {delta > 0 ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}

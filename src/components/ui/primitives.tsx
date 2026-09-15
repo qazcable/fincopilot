@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { formatMoney } from "@/lib/domain/money";
 import { haptic } from "@/lib/client/telegram";
 import { HelpLink } from "../GuideList";
+import { useCurrency } from "../CurrencyProvider";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "soft";
 type ButtonSize = "sm" | "md" | "lg" | "icon";
@@ -67,11 +68,12 @@ export function Money({
   className,
   currencyClassName,
 }: { value: number; sign?: boolean; className?: string; currencyClassName?: string }) {
+  const { symbol } = useCurrency();
   const text = formatMoney(value, { sign, currency: false });
   return (
     <span className={clsx("tabular whitespace-nowrap", className)}>
       {text}
-      <span className={clsx("ml-[0.18em]", currencyClassName ?? "opacity-60")}>₸</span>
+      <span className={clsx("ml-[0.18em]", currencyClassName ?? "opacity-60")}>{symbol}</span>
     </span>
   );
 }

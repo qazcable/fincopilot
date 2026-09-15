@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { Delete } from "lucide-react";
 import { formatMoney, MAX_AMOUNT_MINOR } from "@/lib/domain/money";
 import { haptic } from "@/lib/client/telegram";
+import { useCurrency } from "./CurrencyProvider";
 
 /** Сумма как строка ввода: "1250", "1250,5". Хранится без разделителей тысяч. */
 export function inputToMinor(value: string) {
@@ -30,19 +31,23 @@ function pressKey(value: string, key: string) {
 }
 
 export function AmountDisplay({ value, tone }: { value: string; tone: "EXPENSE" | "INCOME" | "TRANSFER" }) {
+  const { symbol, approx } = useCurrency();
   const minor = inputToMinor(value);
   const [whole, fraction] = value.split(",");
   const wholeText = formatMoney(Number(whole || "0") * 100, { currency: false });
   const size = wholeText.length > 11 ? "text-[36px]" : wholeText.length > 8 ? "text-[44px]" : "text-[54px]";
+  const converted = minor ? approx(minor) : null;
 
   return (
-    <div className="flex h-20 items-center justify-center" aria-live="polite">
+    <div className="flex h-20 flex-col items-center justify-center" aria-live="polite">
       <span className={clsx("tabular font-bold tracking-tight transition-colors", size, minor ? (tone === "INCOME" ? "text-positive" : "text-fg") : "text-faint")}>
         {tone === "INCOME" && minor ? "+" : ""}
         {wholeText}
         {fraction !== undefined && <span>,{fraction}</span>}
-        <span className="ml-2 text-[0.6em] text-faint">₸</span>
+        <span className="ml-2 text-[0.6em] text-faint">{symbol}</span>
       </span>
+      {/* Сумма во второй валюте по курсу Нацбанка — пока вводите */}
+      {converted && <span className="tabular -mt-1 text-[13px] text-muted">{converted}</span>}
     </div>
   );
 }
