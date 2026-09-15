@@ -37,6 +37,7 @@ await call("setMyCommands", {
     { command: "week", description: "Траты за 7 дней" },
     { command: "limits", description: "Лимиты по категориям" },
     { command: "advice", description: "Разбор финансов от ИИ-советника" },
+    { command: "feedback", description: "Отзыв или идея" },
     { command: "help", description: "Как записывать траты" },
   ],
 });
