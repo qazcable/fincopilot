@@ -1,9 +1,12 @@
 import "server-only";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { z } from "zod";
 import { MAX_AMOUNT_MINOR, MINOR_PER_UNIT } from "@/lib/domain/money";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+
+// Разбор трат и категорий — простая классификация: без размышлений ответы те же, а выходных токенов в разы меньше
+const THINKING = { thinkingLevel: ThinkingLevel.LOW };
 
 let client: GoogleGenAI | null = null;
 function getClient() {
@@ -56,6 +59,7 @@ confidence: 0..1. Если сумма не названа или речь не �
     contents,
     config: {
       systemInstruction: instruction,
+      thinkingConfig: THINKING,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -132,6 +136,7 @@ export async function categorizeMerchants(names: string[], categories: AiCategor
 Для каждого номера выбери категорию расходов из списка. ИП и ТОО с непонятным названием — «Другое».
 Категории:
 ${categoryList}`,
+          thinkingConfig: THINKING,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
