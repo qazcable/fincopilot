@@ -48,7 +48,7 @@ export default async function ForecastPage() {
           <div className="flex items-center justify-between py-3 text-[15px]">
             <span>
               Обычные траты в день
-              <span className="block text-[12px] text-muted">среднее за 30 дней без самых крупных трат</span>
+              <span className="block text-[12px] text-muted">среднее за 30 дней без самых крупных трат; переводы людям — по сальдо</span>
             </span>
             <Money value={forecast.dailySpend} className="font-semibold" />
           </div>

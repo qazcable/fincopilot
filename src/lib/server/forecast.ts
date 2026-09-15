@@ -4,7 +4,7 @@ import { getBudgetSnapshot } from "./overview";
 import { addDays, addMonths, dayKeyOf, monthRange, parseKey, startOfDayInstant } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
 import { expectedMonthlyIncome, forecastBalance, typicalDailySpend } from "@/lib/domain/forecast";
-import { DEBT_CATEGORY_KEY, NOT_PEER_OUT, NOT_TRANSIT } from "@/lib/domain/constants";
+import { DEBT_CATEGORY_KEY, NOT_PEER_OUT, NOT_TRANSIT, netPeer } from "@/lib/domain/constants";
 import { peerSums } from "./peer";
 
 type ForecastUser = { id: string; timezone: string; cushion: bigint };
@@ -49,13 +49,14 @@ export async function getForecast(user: ForecastUser, days = FORECAST_DAYS) {
     const day = dayKeyOf(tx.occurredAt, user.timezone);
     byDay.set(day, (byDay.get(day) ?? 0) + fromDb(tx.amount));
   }
-  // Переводы людям — по сальдо за весь период: чужие деньги, пришедшие и ушедшие дальше (частями, на оплаты), взаимно гасятся
+  // Переводы людям — по сальдо: добавляется только то, что ушло людям сверх пришедшего от них.
+  // Лишние пришедшие деньги покупки не уменьшают: разовые поступления в будущем не повторятся
   const peer = await peerSums(
     user.id,
     { gte: startOfDayInstant(historyFrom, user.timezone), lt: startOfDayInstant(today, user.timezone) },
     { account: { inBudget: true } }
   );
-  const dailySpend = Math.max(0, typicalDailySpend([...byDay.values()], SPEND_HISTORY_DAYS) + Math.round((peer.out - peer.in) / SPEND_HISTORY_DAYS / 100) * 100);
+  const dailySpend = typicalDailySpend([...byDay.values()], SPEND_HISTORY_DAYS) + Math.round(netPeer(peer.out, peer.in).expense / SPEND_HISTORY_DAYS / 100) * 100;
 
   // Сумма зарплаты: указанная в настройках, иначе — средняя по истории, поровну между днями выплат без суммы
   const estimatedSalary = expectedMonthlyIncome(salaryMonths);
