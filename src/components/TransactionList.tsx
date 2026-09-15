@@ -63,7 +63,7 @@ export function TransactionRow({ tx }: { tx: TransactionDto }) {
       <Money
         value={tx.kind === "EXPENSE" ? -tx.amount : tx.amount}
         sign
-        className={clsx("text-[15px] font-semibold", tx.kind === "INCOME" && "text-positive")}
+        className={clsx("text-[15px] font-semibold", tx.transit ? "text-muted" : tx.kind === "INCOME" && "text-positive")}
       />
     </button>
   );
@@ -78,7 +78,7 @@ export function TransactionList({ items, today }: { items: TransactionDto[]; tod
       groups.push(group);
     }
     group.items.push(tx);
-    if (tx.kind === "EXPENSE") group.expense += tx.amount;
+    if (tx.kind === "EXPENSE" && !tx.transit) group.expense += tx.amount;
   }
 
   return (

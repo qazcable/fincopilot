@@ -386,6 +386,31 @@ export function pairOwnTransfers<T extends PairItem>(items: T[], signal: (out: T
   return pairs;
 }
 
+// Транзит меньше этой суммы не ищем: мелкие совпадения чаще случайны
+export const TRANSIT_MIN_AMOUNT = 10_000_00;
+
+/**
+ * Транзит друзей: поступление перевода и такой же исходящий перевод в пределах 2 дней (с любых своих карт).
+ * Сначала связываются ближайшие по времени пары; уход раньше прихода допускается (заплатили за друга, он вернул).
+ */
+export function pairTransit<T extends PairItem>(items: T[], dayDiff: (a: DayKey, b: DayKey) => number) {
+  const used = new Set<string>();
+  const pairs: { incoming: T; out: T }[] = [];
+  const incomings = items.filter(i => i.amount >= TRANSIT_MIN_AMOUNT).sort((a, b) => a.day.localeCompare(b.day));
+  for (const incoming of incomings) {
+    const out = items
+      .filter(o => o.amount === -incoming.amount && !used.has(o.id))
+      .map(o => ({ o, distance: dayDiff(incoming.day, o.day) }))
+      .filter(({ distance }) => Math.abs(distance) <= 2)
+      // Уход после прихода — естественный порядок, он выигрывает при равном расстоянии
+      .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance) || b.distance - a.distance)[0]?.o;
+    if (!out) continue;
+    used.add(out.id);
+    pairs.push({ incoming, out });
+  }
+  return pairs;
+}
+
 /** Насколько описание операции указывает на перевод между своими картами (см. pairOwnTransfers) */
 export function ownTransferSignal(text: string, owner: ParsedStatement["owner"], otherAccountName: string) {
   if (mentionsOwner(text, owner) || /сво(й|его|ю) (сч[её]т|карт)/i.test(text)) return 2;

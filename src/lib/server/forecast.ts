@@ -4,7 +4,7 @@ import { getBudgetSnapshot } from "./overview";
 import { addDays, addMonths, dayKeyOf, monthRange, parseKey, startOfDayInstant } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
 import { expectedMonthlyIncome, forecastBalance, typicalDailySpend } from "@/lib/domain/forecast";
-import { DEBT_CATEGORY_KEY } from "@/lib/domain/constants";
+import { DEBT_CATEGORY_KEY, NOT_TRANSIT } from "@/lib/domain/constants";
 
 type ForecastUser = { id: string; timezone: string; cushion: bigint };
 
@@ -27,7 +27,7 @@ export async function getForecast(user: ForecastUser, days = FORECAST_DAYS) {
         account: { inBudget: true },
         // Платежи по графику учтены отдельно — в обычные траты не входят
         scheduledPaymentId: null,
-        NOT: { category: { key: DEBT_CATEGORY_KEY } },
+        AND: [{ NOT: { category: { key: DEBT_CATEGORY_KEY } } }, NOT_TRANSIT],
         occurredAt: { gte: startOfDayInstant(historyFrom, user.timezone), lt: startOfDayInstant(today, user.timezone) },
       },
       select: { amount: true, occurredAt: true },

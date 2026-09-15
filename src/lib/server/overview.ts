@@ -5,6 +5,7 @@ import { ensureSchedule } from "./payments";
 import { calculateBudget, nextIncomeDate } from "@/lib/domain/budget";
 import { dayKeyOf, startOfDayInstant, addDays } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
+import { NOT_TRANSIT } from "@/lib/domain/constants";
 import { previousIncomeDate, summarizeGoals } from "@/lib/domain/goals";
 
 type BudgetUser = { id: string; timezone: string; cushion: bigint };
@@ -30,6 +31,8 @@ export async function getBudgetSnapshot(user: BudgetUser) {
         account: { inBudget: true },
         // Оплата по графику уже была в резерве — она не должна съедать лимит на день
         scheduledPaymentId: null,
+        // Транзит друзей — не траты
+        ...NOT_TRANSIT,
         occurredAt: { gte: startOfDayInstant(today, user.timezone), lt: startOfDayInstant(addDays(today, 1), user.timezone) },
       },
       _sum: { amount: true },

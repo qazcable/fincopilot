@@ -6,6 +6,7 @@ import { getMonthLimitLines } from "./limits";
 import { addDays, dayKeyOf, daysBetween, formatDayKey, parseKey, startOfDayInstant, type DayKey } from "@/lib/domain/dates";
 import { getForecast } from "./forecast";
 import { forecastHeadline } from "@/lib/domain/forecast";
+import { NOT_TRANSIT } from "@/lib/domain/constants";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { formatEvening, formatLimits, formatMorning, formatWeekly, previousWeek, type CategoryAmount } from "@/lib/domain/digest";
 
@@ -20,10 +21,10 @@ async function categoryTotals(user: DigestUser, from: DayKey, toExclusive: DayKe
   const [byCategory, income] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["categoryId"],
-      where: { userId: user.id, kind: "EXPENSE", occurredAt: range, ...(options.excludePayments ? { scheduledPaymentId: null } : {}) },
+      where: { userId: user.id, kind: "EXPENSE", occurredAt: range, ...NOT_TRANSIT, ...(options.excludePayments ? { scheduledPaymentId: null } : {}) },
       _sum: { amount: true },
     }),
-    prisma.transaction.aggregate({ where: { userId: user.id, kind: "INCOME", occurredAt: range }, _sum: { amount: true } }),
+    prisma.transaction.aggregate({ where: { userId: user.id, kind: "INCOME", occurredAt: range, ...NOT_TRANSIT }, _sum: { amount: true } }),
   ]);
 
   const categories = await prisma.category.findMany({

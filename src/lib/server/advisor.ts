@@ -8,7 +8,7 @@ import { formatMoney, fromDb } from "@/lib/domain/money";
 import { simulatePayoff } from "@/lib/domain/payoff";
 import { forecastHeadline } from "@/lib/domain/forecast";
 import { getForecast } from "./forecast";
-import { ACCOUNT_KINDS, OBLIGATION_KINDS, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
+import { ACCOUNT_KINDS, NOT_TRANSIT, OBLIGATION_KINDS, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
 
 type AdvisorUser = { id: string; timezone: string; cushion: bigint; firstName: string | null };
 
@@ -39,7 +39,7 @@ export async function buildAdvisorContext(user: AdvisorUser) {
       const range = monthRange(m.year, m.month, user.timezone);
       const sums = await prisma.transaction.groupBy({
         by: ["kind"],
-        where: { userId: user.id, kind: { in: ["EXPENSE", "INCOME"] }, occurredAt: { gte: range.from, lt: range.to } },
+        where: { userId: user.id, kind: { in: ["EXPENSE", "INCOME"] }, occurredAt: { gte: range.from, lt: range.to }, ...NOT_TRANSIT },
         _sum: { amount: true },
       });
       const sum = (kind: string) => fromDb(sums.find(s => s.kind === kind)?._sum.amount);
@@ -48,7 +48,7 @@ export async function buildAdvisorContext(user: AdvisorUser) {
     getLimitsOverview(user, year, month),
     prisma.transaction.groupBy({
       by: ["note"],
-      where: { userId: user.id, kind: "EXPENSE", note: { not: null }, occurredAt: { gte: since30 } },
+      where: { userId: user.id, kind: "EXPENSE", note: { not: null }, occurredAt: { gte: since30 }, ...NOT_TRANSIT },
       _sum: { amount: true },
       _count: { _all: true },
       orderBy: { _sum: { amount: "desc" } },

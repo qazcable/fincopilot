@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "./prisma";
 import { addMonths, dayKeyOf, monthRange, parseKey } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
+import { TRANSIT_KEYS } from "@/lib/domain/constants";
 import { monthKeyOf, reachedLevels, type LimitLevel } from "@/lib/domain/limits";
 import type { LimitLine } from "@/lib/domain/digest";
 
@@ -46,7 +47,7 @@ export async function getLimitsOverview(user: LimitsUser, year: number, month: n
   const history = { from: monthRange(start.year, start.month, user.timezone).from, to: current.from };
 
   const [categories, spent, past] = await Promise.all([
-    prisma.category.findMany({ where: { userId: user.id, kind: "EXPENSE", archivedAt: null }, orderBy: { sortOrder: "asc" } }),
+    prisma.category.findMany({ where: { userId: user.id, kind: "EXPENSE", archivedAt: null, NOT: { key: { in: TRANSIT_KEYS } } }, orderBy: { sortOrder: "asc" } }),
     spentByCategory(user.id, current.from, current.to),
     spentByCategory(user.id, history.from, history.to),
   ]);

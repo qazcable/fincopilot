@@ -52,10 +52,13 @@ export const DEFAULT_CATEGORIES: DefaultCategory[] = [
   { key: "cash", name: "Снятие наличных", kind: "EXPENSE", emoji: "🏧", color: "#78716C", keywords: ["банкомат", "наличн", "снял", "снятие"] },
   { key: "tobacco", name: "Табак", kind: "EXPENSE", emoji: "🚬", color: "#A16207", keywords: ["сигарет", "сигар", "табак", "tobacco", "iqos", "айкос", "heets", "хитс", "terea", "терея", "стики", "вейп", "vape", "электронк", "одноразк", "жидкость для", "marlboro", "мальборо", "winston", "винстон", "parliament", "парламент", "kent", "кент"] },
   { key: "education", name: "Образование", kind: "EXPENSE", emoji: "🎓", color: "#6366F1", keywords: ["университет", "university", "вуз", "обучени", "учеб", "колледж", "college", "академи", "academy", "курсы", "school", "школ", "репетитор", "контракт за обучение"] },
+  { key: "transit_out", name: "Транзит: отправил", kind: "EXPENSE", emoji: "🔄", color: "#94A3B8", keywords: [] },
   { key: "other", name: "Другое", kind: "EXPENSE", emoji: "📦", color: "#A1A1AA", keywords: [] },
   { key: "salary", name: "Зарплата", kind: "INCOME", emoji: "💼", color: "#10B981", keywords: ["зарплат", "зп", "аванс", "оклад"] },
   { key: "side", name: "Подработка", kind: "INCOME", emoji: "🧑‍💻", color: "#0EA5E9", keywords: ["подработк", "фриланс", "заказ", "гонорар"] },
   { key: "gift_in", name: "Переводы и подарки", kind: "INCOME", emoji: "🎁", color: "#F472B6", keywords: ["перевел", "перевёл", "подарил", "вернул", "возврат", "кэшбэк", "кешбэк", "cashback"] },
+  // Транзит: деньги друзей, которые пришли и ушли дальше, — не доход и не расход, в статистику и лимиты не попадают
+  { key: "transit_in", name: "Транзит: получил", kind: "INCOME", emoji: "🔄", color: "#94A3B8", keywords: [] },
   { key: "other_in", name: "Другой доход", kind: "INCOME", emoji: "💰", color: "#22D3EE", keywords: [] },
 ];
 
@@ -65,3 +68,10 @@ export const FALLBACK_CATEGORY_KEY: Record<TxKind, string> = {
 };
 
 export const DEBT_CATEGORY_KEY = "debts";
+
+export const TRANSIT_KEYS = ["transit_in", "transit_out"];
+
+/** Условие Prisma: операция не транзит (операции без категории проходят) */
+export const NOT_TRANSIT = { NOT: { category: { key: { in: TRANSIT_KEYS } } } };
+
+export const isTransitKey = (key: string | null | undefined) => key != null && TRANSIT_KEYS.includes(key);

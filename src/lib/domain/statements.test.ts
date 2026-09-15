@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyStatementRow, cleanBankDetails, matchOwnTransfers, mentionsOwner, ownTransferSignal, pairOwnTransfers, parseBankNumber, type ParsedStatement,
+  classifyStatementRow, cleanBankDetails, matchOwnTransfers, mentionsOwner, ownTransferSignal, pairOwnTransfers, pairTransit, parseBankNumber, type ParsedStatement,
 } from "./statements";
 import { daysBetween } from "./dates";
 
@@ -74,6 +74,19 @@ describe("pairOwnTransfers", () => {
       daysBetween
     );
     expect(pairs.map(p => `${p.out.id}>${p.incoming.id}`)).toEqual(["bcc-out>kaspi-in", "kaspi-out>bcc-in"]);
+  });
+});
+
+describe("pairTransit", () => {
+  it("pairs a friend's money that came in and went out within 2 days", () => {
+    const items = [
+      { id: "in", accountId: "kaspi", amount: 150_000_00, day: "2026-09-01" },
+      { id: "out", accountId: "bcc", amount: -150_000_00, day: "2026-09-02" },
+      { id: "far-out", accountId: "kaspi", amount: -150_000_00, day: "2026-09-10" },
+      { id: "small-in", accountId: "kaspi", amount: 2_000_00, day: "2026-09-03" },
+      { id: "small-out", accountId: "kaspi", amount: -2_000_00, day: "2026-09-03" },
+    ];
+    expect(pairTransit(items, daysBetween).map(p => `${p.incoming.id}>${p.out.id}`)).toEqual(["in>out"]);
   });
 });
 

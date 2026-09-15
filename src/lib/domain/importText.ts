@@ -36,6 +36,8 @@ export type ImportSummary = {
   needAi: number;
   imported?: number;
   linkedTransfers?: number;
+  // Пары «друг прислал — отправил дальше», перенесённые в «Транзит»
+  transitPairs?: number;
   links?: ImportLink[];
   linkedKeys?: string[];
   createdAccountId?: string | null;
@@ -89,6 +91,7 @@ export function formatImportApplied(summary: ImportSummary) {
   ];
   if (summary.closingBalance !== null) lines.push(`Баланс карты: ${formatMoney(summary.closingBalance)}`);
   if (summary.linkedTransfers) lines.push(`🔗 Связано переводов между своими картами: ${summary.linkedTransfers}`);
+  if (summary.transitPairs) lines.push(`🔄 Транзит друзей (пришло и ушло дальше): ${summary.transitPairs} — не считаю доходом и расходом`);
   lines.push("", "Категории подобраны автоматически — поправить можно в истории. Исправленные магазины я запомню.");
   return lines.join("\n");
 }
