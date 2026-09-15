@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { InlineKeyboard } from "grammy";
 import { findUserByApiKey } from "@/lib/server/api-key";
-import { captureAudio, captureText } from "@/lib/server/capture";
+import { captureAudio, captureSms, captureText, captureWallet } from "@/lib/server/capture";
 import { buildReceipt } from "@/lib/server/receipt";
 import { errorMessage, getBot, isBotConfigured } from "@/lib/server/bot";
 
@@ -14,6 +14,7 @@ function text(body: string, status = 200) {
 /**
  * Приём операции из Apple Shortcuts (кнопка Action Button).
  * POST, Authorization: Bearer fc_…, тело — JSON {"text": "..."} или form-data с полем text или audio.
+ * Автоматизации: {"amount", "merchant", "card"} — оплата Apple Wallet, {"sms": "..."} — SMS банка.
  * Ответ — обычный текст, его удобно показать действием «Показать результат».
  */
 export async function POST(req: NextRequest) {
@@ -25,8 +26,21 @@ export async function POST(req: NextRequest) {
 
   if (contentType.includes("application/json")) {
     const body = await req.json().catch(() => null);
-    if (typeof body?.text !== "string") return text("Нет текста", 400);
-    result = await captureText(user, body.text, "SHORTCUT");
+    if (typeof body?.sms === "string") {
+      // Автоматизация «Сообщение»: SMS банка
+      result = await captureSms(user, body.sms);
+    } else if (body?.amount !== undefined && body?.amount !== null) {
+      // Автоматизация «Транзакция» Apple Wallet: сумма, магазин, карта
+      result = await captureWallet(user, {
+        amount: String(body.amount),
+        merchant: typeof body.merchant === "string" ? body.merchant : undefined,
+        card: typeof body.card === "string" ? body.card : undefined,
+      });
+    } else if (typeof body?.text === "string") {
+      result = await captureText(user, body.text, "SHORTCUT");
+    } else {
+      return text("Нет текста", 400);
+    }
   } else {
     const form = await req.formData().catch(() => null);
     const audio = form?.get("audio");
@@ -42,7 +56,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (!result.ok) {
-    return text(result.reason === "rate_limited" ? "Слишком много запросов, подождите минуту" : "Не понял 🤔 Скажите, например: «такси тысяча пятьсот»", 422);
+    const messages: Record<string, [string, number]> = {
+      rate_limited: ["Слишком много запросов, подождите минуту", 429],
+      duplicate: ["Эта оплата уже записана", 200],
+      foreign_currency: ["Покупка в валюте — запишется из выписки банка", 200],
+      bad_amount: ["Не понял сумму оплаты", 422],
+    };
+    const [message, status] = messages[result.reason] ?? ["Не понял 🤔 Скажите, например: «такси тысяча пятьсот»", 422];
+    return text(message, status);
   }
 
   const receipt = await buildReceipt(user, result.transactionId, result.linkedPaymentTitle);

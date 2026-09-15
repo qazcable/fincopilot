@@ -360,6 +360,15 @@ export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string |
           <li>Добавьте «Показать результат» и назначьте команду на Action Button.</li>
         </ol>
 
+        <div className="space-y-1.5 rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted">
+          <p className="font-semibold text-fg">⚡ Автозапись оплат Apple Pay</p>
+          <p>«Команды» → Автоматизация → «Транзакция» → выберите карты → «Запускать сразу». Действие «Получить содержимое URL» с тем же адресом и ключом, JSON:</p>
+          <p><code>amount</code> = Сумма, <code>merchant</code> = Продавец, <code>card</code> = Карта.</p>
+          <p className="pt-1 font-semibold text-fg">✉️ SMS банка</p>
+          <p>Автоматизация «Сообщение» → отправитель — банк → JSON: <code>sms</code> = Содержимое сообщения.</p>
+          <p className="text-[12px] text-faint">Дубли не появятся: такие оплаты узнаются при импорте выписки.</p>
+        </div>
+
         <div className="grid gap-2">
           <Button variant={apiKeyHint ? "secondary" : "primary"} loading={pending} onClick={generate}>
             {apiKeyHint ? "Создать новый ключ" : "Создать ключ"}

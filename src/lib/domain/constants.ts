@@ -1,7 +1,7 @@
 export const TX_KINDS = ["EXPENSE", "INCOME"] as const;
 export type TxKind = (typeof TX_KINDS)[number];
 
-export const TX_SOURCES = ["APP", "BOT_TEXT", "BOT_VOICE", "SHORTCUT", "PAYMENT", "IMPORT"] as const;
+export const TX_SOURCES = ["APP", "BOT_TEXT", "BOT_VOICE", "SHORTCUT", "PAYMENT", "IMPORT", "WALLET", "SMS"] as const;
 export type TxSource = (typeof TX_SOURCES)[number];
 
 export const ACCOUNT_KINDS = {

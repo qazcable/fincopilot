@@ -5,7 +5,8 @@ import { markPaymentPaid } from "./payments";
 import { categorizeMerchants, isAiConfigured, parseWithAi } from "./ai";
 import { normalizeMerchant } from "@/lib/domain/kaspi";
 import { rateLimit } from "./rate-limit";
-import { quickParse } from "@/lib/domain/parse";
+import { matchCategoryKey, quickParse } from "@/lib/domain/parse";
+import { accountForCard, parseBankSms, parseWalletAmount } from "@/lib/domain/autocapture";
 import { addDays, dayKeyOf } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
 import { DEBT_CATEGORY_KEY, type TxSource } from "@/lib/domain/constants";
@@ -98,16 +99,67 @@ async function aiCategoryId(userId: string, kind: "EXPENSE" | "INCOME", note: st
   }
 }
 
+/** Выученная категория → словарь → ИИ → «Другое» */
+async function categorize(userId: string, kind: "EXPENSE" | "INCOME", note: string, dictionaryKey = matchCategoryKey(note, kind)) {
+  return (
+    await learnedCategoryId(userId, kind, note) ??
+    (dictionaryKey ? await resolveCategoryId(userId, kind, dictionaryKey) : await aiCategoryId(userId, kind, note)) ??
+    await resolveCategoryId(userId, kind, null)
+  );
+}
+
+export type AutoCaptureResult = CaptureResult | { ok: false; reason: "duplicate" | "foreign_currency" | "bad_amount"; transactionId?: string };
+
+// Автоматизация iOS иногда срабатывает дважды — одинаковую операцию в течение пары минут не записываем
+const REPEAT_WINDOW_MS = 3 * 60 * 1000;
+
+async function saveAuto(user: CaptureUser, input: { amount: number; kind: "EXPENSE" | "INCOME"; note: string; accountId: string | null }, source: TxSource, rawInput: string): Promise<AutoCaptureResult> {
+  const recent = await prisma.transaction.findFirst({
+    where: {
+      userId: user.id, source, kind: input.kind, amount: BigInt(input.amount), note: input.note,
+      createdAt: { gte: new Date(Date.now() - REPEAT_WINDOW_MS) },
+    },
+  });
+  if (recent) return { ok: false, reason: "duplicate", transactionId: recent.id };
+
+  const categoryId = await categorize(user.id, input.kind, input.note);
+  const linked = await tryLinkPayment(user, { ...input, categoryId }, source, rawInput);
+  if (linked) return { ok: true, transactionId: linked.transactionId, linkedPaymentTitle: linked.title };
+  const transaction = await createTransaction(user.id, { ...input, categoryId, source, rawInput });
+  return { ok: true, transactionId: transaction.id, linkedPaymentTitle: null };
+}
+
+async function accounts(userId: string) {
+  return prisma.account.findMany({ where: { userId, archivedAt: null }, select: { id: true, name: true, isDefault: true, kind: true } });
+}
+
+/** Оплата через Apple Wallet: сумма, магазин и название карты из автоматизации «Транзакция» */
+export async function captureWallet(user: CaptureUser, data: { amount: string; merchant?: string; card?: string }): Promise<AutoCaptureResult> {
+  const parsed = parseWalletAmount(data.amount);
+  if (!parsed) return { ok: false, reason: "bad_amount" };
+  // Покупки в валюте точнее придут из выписки — там сумма в тенге после конвертации
+  if (parsed.currency !== "KZT") return { ok: false, reason: "foreign_currency" };
+  const note = (data.merchant ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || "Оплата картой";
+  const account = data.card ? accountForCard(data.card, await accounts(user.id)) : null;
+  return saveAuto(user, { amount: parsed.amount, kind: "EXPENSE", note, accountId: account?.id ?? null }, "WALLET", `Apple Wallet: ${data.card ?? ""} ${data.amount}`.trim());
+}
+
+/** SMS банка, пересланное автоматизацией «Сообщение» */
+export async function captureSms(user: CaptureUser, text: string): Promise<AutoCaptureResult> {
+  const parsed = parseBankSms(text.slice(0, 1000));
+  if (!parsed) return captureText(user, text, "SMS");
+  const list = await accounts(user.id);
+  const account = parsed.cardDigits ? list.find(a => a.name.includes(parsed.cardDigits!)) : null;
+  return saveAuto(user, { amount: parsed.amount, kind: parsed.kind, note: parsed.note, accountId: account?.id ?? null }, "SMS", text.slice(0, 500));
+}
+
 export async function captureText(user: CaptureUser, text: string, source: TxSource): Promise<CaptureResult> {
   const input = text.trim().slice(0, 500);
   if (!input) return { ok: false, reason: "not_understood" };
 
   const quick = quickParse(input);
   if (quick) {
-    const categoryId =
-      await learnedCategoryId(user.id, quick.kind, quick.note) ??
-      (quick.categoryKey ? await resolveCategoryId(user.id, quick.kind, quick.categoryKey) : await aiCategoryId(user.id, quick.kind, quick.note)) ??
-      await resolveCategoryId(user.id, quick.kind, null);
+    const categoryId = await categorize(user.id, quick.kind, quick.note, quick.categoryKey);
     return save(user, { amount: quick.amount, kind: quick.kind, categoryId, note: quick.note }, source, input);
   }
 

@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { fromDb, toDb } from "@/lib/domain/money";
-import { FALLBACK_CATEGORY_KEY, type TxKind, type TxSource } from "@/lib/domain/constants";
+import { DEFAULT_CATEGORIES, FALLBACK_CATEGORY_KEY, type TxKind, type TxSource } from "@/lib/domain/constants";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -53,7 +53,19 @@ export async function getDefaultAccount(userId: string, db: Db = prisma) {
 
 export async function resolveCategoryId(userId: string, kind: TxKind, categoryKey: string | null, db: Db = prisma) {
   const keys = categoryKey ? [categoryKey, FALLBACK_CATEGORY_KEY[kind]] : [FALLBACK_CATEGORY_KEY[kind]];
-  const categories = await db.category.findMany({ where: { userId, kind, key: { in: keys }, archivedAt: null } });
+  let categories = await db.category.findMany({ where: { userId, kind, key: { in: keys }, archivedAt: null } });
+  // Новая стандартная категория (например, «Табак») у давних пользователей появляется при первом использовании
+  const missing = categoryKey && !categories.some(c => c.key === categoryKey)
+    ? DEFAULT_CATEGORIES.find(c => c.key === categoryKey && c.kind === kind)
+    : undefined;
+  if (missing) {
+    const exists = await db.category.findFirst({ where: { userId, key: missing.key } });
+    if (!exists) {
+      const index = DEFAULT_CATEGORIES.indexOf(missing);
+      await db.category.create({ data: { userId, key: missing.key, name: missing.name, kind: missing.kind, emoji: missing.emoji, color: missing.color, sortOrder: index } });
+      categories = await db.category.findMany({ where: { userId, kind, key: { in: keys }, archivedAt: null } });
+    }
+  }
   return (categories.find(c => c.key === categoryKey) ?? categories[0])?.id ?? null;
 }
 
