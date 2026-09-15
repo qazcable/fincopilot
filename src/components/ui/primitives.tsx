@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { formatMoney } from "@/lib/domain/money";
 import { haptic } from "@/lib/client/telegram";
+import { HelpLink } from "../GuideList";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "soft";
 type ButtonSize = "sm" | "md" | "lg" | "icon";
@@ -88,10 +89,13 @@ export function CategoryIcon({ emoji, color, size = "md" }: { emoji: string; col
   );
 }
 
-export function SectionHeader({ title, href, action }: { title: string; href?: string; action?: string }) {
+export function SectionHeader({ title, href, action, help }: { title: string; href?: string; action?: string; help?: string }) {
   return (
     <div className="mb-3 flex items-end justify-between px-1">
-      <h2 className="text-[17px] font-semibold tracking-tight">{title}</h2>
+      <h2 className="flex items-center gap-0.5 text-[17px] font-semibold tracking-tight">
+        {title}
+        {help && <HelpLink topic={help} className="-my-1" />}
+      </h2>
       {href && (
         <Link href={href} onClick={() => haptic.tap()} className="text-[14px] font-medium text-accent">
           {action ?? "Все"}
@@ -169,11 +173,14 @@ export function EmptyState({ emoji, title, text, children }: { emoji: string; ti
   );
 }
 
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
+export function PageHeader({ title, subtitle, action, help }: { title: string; subtitle?: string; action?: React.ReactNode; help?: string }) {
   return (
     <header className="flex items-end justify-between gap-3 px-5 pb-4 pt-6">
       <div className="min-w-0">
-        <h1 className="text-[28px] font-bold leading-tight tracking-tight">{title}</h1>
+        <h1 className="flex items-center gap-1 text-[28px] font-bold leading-tight tracking-tight">
+          {title}
+          {help && <HelpLink topic={help} />}
+        </h1>
         {subtitle && <p className="mt-0.5 text-[14px] text-muted">{subtitle}</p>}
       </div>
       {action}

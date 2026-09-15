@@ -28,6 +28,7 @@ export default async function PaymentsPage() {
     <main className="safe-top">
       <PageHeader
         title="Платежи"
+        help="payments"
         action={
           <Link href="/payments/new" aria-label="Добавить обязательство" className="pressable flex size-11 items-center justify-center rounded-full bg-accent text-accent-fg shadow-[0_8px_20px_-8px_var(--accent)]">
             <Plus className="size-6" />

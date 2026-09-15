@@ -2,6 +2,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import { ChevronRight } from "lucide-react";
 import { Money } from "./ui/primitives";
+import { HelpLink } from "./GuideList";
 import type { BudgetResult } from "@/lib/domain/budget";
 import { formatDayKey, pluralDays } from "@/lib/domain/dates";
 
@@ -31,7 +32,7 @@ export function BudgetHero({
       />
 
       <div className="relative flex items-center justify-between">
-        <p className="text-[14px] font-medium text-muted">Можно потратить сегодня</p>
+        <p className="flex items-center gap-0.5 text-[14px] font-medium text-muted">Можно потратить сегодня <HelpLink topic="today" className="-my-1" /></p>
         <span className={clsx("rounded-full px-2.5 py-1 text-[12px] font-semibold", status.pill)}>{status.label}</span>
       </div>
 

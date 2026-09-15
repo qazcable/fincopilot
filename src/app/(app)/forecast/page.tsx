@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/server/auth";
 import { getForecast } from "@/lib/server/forecast";
 import { BackButton } from "@/components/TelegramBackButton";
 import { ForecastChart } from "@/components/ForecastChart";
+import { HelpLink } from "@/components/GuideList";
 import { Card, Money, SectionHeader } from "@/components/ui/primitives";
 import { forecastHeadline } from "@/lib/domain/forecast";
 import { formatDayKey, weekdayOf } from "@/lib/domain/dates";
@@ -19,7 +20,7 @@ export default async function ForecastPage() {
   return (
     <main className="safe-top px-4 pt-4">
       <BackButton href="/" label="Главная" />
-      <h1 className="mb-1 mt-3 px-1 text-[28px] font-bold tracking-tight">Прогноз остатка</h1>
+      <h1 className="mb-1 mt-3 flex items-center gap-1 px-1 text-[28px] font-bold tracking-tight">Прогноз остатка <HelpLink topic="forecast" /></h1>
       <p className="mb-5 px-1 text-[14px] text-muted">Деньги на счетах в лимите на 45 дней вперёд</p>
 
       <Card className="p-4">
@@ -39,7 +40,7 @@ export default async function ForecastPage() {
       </Card>
 
       <section className="mt-6">
-        <SectionHeader title="Из чего складывается" />
+        <SectionHeader title="Из чего складывается" help="forecast" />
         <Card className="divide-y divide-line px-4">
           <div className="flex items-center justify-between py-3 text-[15px]">
             <span>Сейчас на счетах в лимите</span>

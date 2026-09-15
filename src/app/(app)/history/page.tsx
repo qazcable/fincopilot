@@ -28,7 +28,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
 
   return (
     <main className="safe-top">
-      <PageHeader title="История" />
+      <PageHeader title="История" help="record" />
       <div className="space-y-4 px-4">
         <MonthSwitcher basePath="/history" year={year} month={month} currentYear={current.year} currentMonth={current.month} query={filter !== "all" ? `kind=${filter}` : ""} />
 

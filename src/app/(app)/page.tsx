@@ -1,6 +1,6 @@
 import Link from "next/link";
 import clsx from "clsx";
-import { AlertTriangle, ChevronRight, Settings, Sparkles, TrendingUp } from "lucide-react";
+import { AlertTriangle, ChevronRight, CircleHelp, Settings, Sparkles, TrendingUp } from "lucide-react";
 import { getForecast } from "@/lib/server/forecast";
 import { forecastHeadline } from "@/lib/domain/forecast";
 import { formatMoney } from "@/lib/domain/money";
@@ -15,6 +15,11 @@ import { FeedbackButton } from "@/components/settings/CommunitySections";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
 import { Card, EmptyState, Money, SectionHeader } from "@/components/ui/primitives";
 import { capitalize, formatDayKey, plural, weekdayOf } from "@/lib/domain/dates";
+
+/** Первая неделя после знакомства с приложением */
+function onboardedRecently(onboardedAt: Date | null) {
+  return onboardedAt !== null && Date.now() - onboardedAt.getTime() < 7 * 24 * 60 * 60 * 1000;
+}
 
 function greeting(hour: number) {
   if (hour < 5) return "Доброй ночи";
@@ -40,12 +45,31 @@ export default async function HomePage() {
             {greeting(data.hour)}{user.firstName ? `, ${user.firstName}` : ""}
           </h1>
         </div>
-        <Link href="/settings" aria-label="Настройки" className="pressable flex size-11 items-center justify-center rounded-full bg-surface text-muted shadow-card">
-          <Settings className="size-5" />
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/guide" aria-label="Инструкция" className="pressable flex size-11 items-center justify-center rounded-full bg-surface text-muted shadow-card">
+            <CircleHelp className="size-5" />
+          </Link>
+          <Link href="/settings" aria-label="Настройки" className="pressable flex size-11 items-center justify-center rounded-full bg-surface text-muted shadow-card">
+            <Settings className="size-5" />
+          </Link>
+        </div>
       </header>
 
       <div className="space-y-6 px-4">
+        {/* Первую неделю после знакомства — заметная подсказка про инструкцию */}
+        {onboardedRecently(user.onboardedAt) && (
+          <Link href="/guide" className="pressable block">
+            <Card className="flex items-center gap-3 bg-accent-soft p-4">
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent text-xl text-accent-fg" aria-hidden>📖</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[15px] font-semibold">Как пользоваться FinCopilot</span>
+                <span className="block text-[13px] leading-snug text-muted">Что умеет каждая функция и как она работает</span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-faint" />
+            </Card>
+          </Link>
+        )}
+
         <BudgetHero
           budget={data.budget}
           horizon={data.horizon}
@@ -104,7 +128,7 @@ export default async function HomePage() {
         </div>
 
         <section>
-          <SectionHeader title="Цели" href="/goals" action={data.goals.length > 0 ? "Все" : "Создать"} />
+          <SectionHeader title="Цели" help="goals" href="/goals" action={data.goals.length > 0 ? "Все" : "Создать"} />
           {data.goals.length > 0 ? (
             <Link href="/goals" className="pressable block">
               <Card className="space-y-4 p-4">
@@ -125,7 +149,7 @@ export default async function HomePage() {
         </section>
 
         <section>
-          <SectionHeader title="Ближайшие платежи" href="/payments" />
+          <SectionHeader title="Ближайшие платежи" help="payments" href="/payments" />
           {data.upcoming.length > 0 ? (
             <Card className="p-1.5">
               {data.upcoming.map(payment => <PaymentRow key={payment.id} payment={payment} today={data.today} />)}

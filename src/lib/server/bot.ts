@@ -17,6 +17,7 @@ import { applyImport, cancelImport, createStatementDraft, rememberMerchantCatego
 import { formatImportApplied, formatImportDraft, hasSomethingToImport } from "@/lib/domain/importText";
 import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
 import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
+import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/lib/domain/guide";
 
 const MAX_VOICE_SECONDS = 60;
 // Ограничение Bot API на скачивание файлов
@@ -66,6 +67,15 @@ async function userFromContext(ctx: Context) {
   // Посторонних не заводим в базе — только ответ
   await ctx.reply("Это закрытый бот 🔒 Доступ — по приглашению. Попросите ссылку у того, кто вас позвал.");
   return null;
+}
+
+function guideMenuKeyboard() {
+  const keyboard = new InlineKeyboard();
+  GUIDE_TOPICS.forEach((topic, index) => {
+    keyboard.text(`${topic.emoji} ${topic.title}`, `g:${topic.id}`);
+    if (index % 2 === 1) keyboard.row();
+  });
+  return keyboard;
 }
 
 /** Отзыв: ответ на сообщение бота с приглашением написать отзыв */
@@ -171,31 +181,37 @@ function registerHandlers(bot: Bot) {
       }).catch(() => undefined);
     }
 
+    const keyboard = new InlineKeyboard().text("📖 Как пользоваться — инструкция", "g:new").row();
+    if (url) keyboard.webApp("💸 Открыть приложение", url);
     await ctx.reply(
       [
-        `Привет${user.firstName ? `, ${escapeHtml(user.firstName)}` : ""}! Я помогу держать финансы под контролем 👋`,
+        `Привет${user.firstName ? `, ${escapeHtml(user.firstName)}` : ""}! Я FinCopilot — помогу держать финансы под контролем 👋`,
         "",
-        "Просто пишите траты сообщением:",
-        "<code>кофе 1200</code>",
-        "<code>такси 2.5к</code>",
-        "<code>+250000 зарплата</code>",
+        "<b>Что я умею:</b>",
+        "💸 Считаю, сколько можно потратить сегодня, чтобы хватило до зарплаты",
+        "✍️ Записываю траты сообщением или голосом: <code>кофе 1200</code>",
+        "🏦 Напоминаю о кредитах и платежах",
+        "🎯 Помогаю копить к цели и вижу кассовые разрывы заранее",
+        "🤖 Отвечаю на вопросы о ваших деньгах: <i>на чём сэкономить?</i>",
         "",
-        "Или отправьте голосовое 🎙",
+        "<b>С чего начать:</b>",
+        "1. Откройте приложение и укажите, сколько денег на карте и когда зарплата.",
+        "2. Добавьте кредиты и счета.",
+        "3. Записывайте траты сюда, в чат.",
         "",
-        "Каждое утро пришлю лимит на день, вечером — итоги дня, по понедельникам — итоги недели.",
-        "",
-        "/today — сколько можно потратить сегодня",
-        "/week — траты за 7 дней",
-        "/limits — лимиты по категориям",
-        "/advice — разбор финансов от ИИ-советника",
-        "",
-        "💬 Задайте вопрос: <i>на чём я могу сэкономить?</i>",
-        "📄 А ещё можно прислать PDF-выписку Kaspi Gold, БЦК, Freedom или Alatau — импортирую операции.",
-        "",
-        "🧪 Приложение в тестировании — если что-то неудобно или есть идея, напишите /feedback",
+        "Подробно о каждой функции — в инструкции 👇",
+        "🧪 Приложение в тестировании — идеи и замечания присылайте через /feedback",
       ].join("\n"),
-      { parse_mode: "HTML", reply_markup: openAppKeyboard() }
+      { parse_mode: "HTML", reply_markup: keyboard }
     );
+  });
+
+  // Инструкция отдельным сообщением — приветствие остаётся в чате
+  bot.callbackQuery("g:new", async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    await ctx.answerCallbackQuery();
+    await ctx.reply(GUIDE_INTRO_HTML, { parse_mode: "HTML", reply_markup: guideMenuKeyboard() });
   });
 
   bot.command(["today", "budget"], async ctx => {
@@ -220,9 +236,38 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.command("help", ctx => ctx.reply(
+    "📖 Подробная инструкция по каждой функции — /guide\n\n" +
     "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold, Банк ЦентрКредит, Freedom или Alatau City Bank — импортирую операции без дублей, а переводы между своими картами свяжу.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.\n\n🧪 /feedback — отзыв или идея: что неудобно, что сломалось, чего не хватает.",
     { parse_mode: "HTML" }
   ));
+
+  // 📖 Инструкция: меню тем → тема (что это, зачем, как работает)
+  bot.command(["guide", "instruction"], async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    await ctx.reply(GUIDE_INTRO_HTML, { parse_mode: "HTML", reply_markup: guideMenuKeyboard() });
+  });
+
+  bot.callbackQuery(/^g:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    await ctx.answerCallbackQuery();
+    if (ctx.match[1] === "menu") {
+      await ctx.editMessageText(GUIDE_INTRO_HTML, { parse_mode: "HTML", reply_markup: guideMenuKeyboard() }).catch(() => undefined);
+      return;
+    }
+    const topic = guideTopic(ctx.match[1]);
+    if (!topic) return;
+    const keyboard = new InlineKeyboard();
+    const url = appUrl();
+    if (url && topic.appPath) keyboard.webApp("Открыть в приложении", `${url}${topic.appPath}`).row();
+    // «Дальше» — следующая тема, чтобы инструкцию можно было пройти подряд
+    const index = GUIDE_TOPICS.indexOf(topic);
+    const next = GUIDE_TOPICS[index + 1];
+    if (next) keyboard.text(`Дальше: ${next.emoji} ${next.title}`, `g:${next.id}`).row();
+    keyboard.text("← Все темы", "g:menu");
+    await ctx.editMessageText(guideTopicHtml(topic), { parse_mode: "HTML", reply_markup: keyboard }).catch(() => undefined);
+  });
 
   bot.command("feedback", async ctx => {
     const user = await userFromContext(ctx);

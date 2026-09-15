@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/server/auth";
 import { getBudgetSnapshot } from "@/lib/server/overview";
 import { BackButton } from "@/components/TelegramBackButton";
 import { GoalsBoard } from "@/components/GoalsBoard";
+import { HelpLink } from "@/components/GuideList";
 
 export default async function GoalsPage() {
   const user = await requireUser();
@@ -15,7 +16,7 @@ export default async function GoalsPage() {
     <main className="safe-top pt-4">
       <div className="px-4">
         <BackButton href="/" label="Главная" />
-        <h1 className="mb-5 mt-3 px-1 text-[28px] font-bold tracking-tight">Цели</h1>
+        <h1 className="mb-5 mt-3 flex items-center gap-1 px-1 text-[28px] font-bold tracking-tight">Цели <HelpLink topic="goals" /></h1>
       </div>
       <GoalsBoard goals={snapshot.goals} accounts={accounts} today={snapshot.today} reservedForGoals={snapshot.budget.reservedForGoals} />
     </main>

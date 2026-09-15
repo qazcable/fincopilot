@@ -27,7 +27,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
 
   return (
     <main className="safe-top">
-      <PageHeader title="Аналитика" />
+      <PageHeader title="Аналитика" help="limits" />
       <div className="space-y-4 px-4">
         <MonthSwitcher basePath="/stats" year={year} month={month} currentYear={current.year} currentMonth={current.month} />
 
