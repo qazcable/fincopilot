@@ -47,6 +47,22 @@ model User {
   imports          ImportBatch[]
   merchants        MerchantCategory[]
   goals            Goal[]
+  advisorMessages  AdvisorMessage[]
+}
+
+// Переписка с ИИ-советником — общая для бота и приложения
+model AdvisorMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // user | assistant
+  role      String
+  text      String
+  // BOT | APP
+  source    String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Account {

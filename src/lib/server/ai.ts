@@ -89,6 +89,38 @@ confidence: 0..1. Если сумма не названа или речь не �
   return { amount, kind: parsed.kind, categoryId: category?.id ?? null, note: parsed.note.trim().slice(0, 200) };
 }
 
+const ADVISOR_INSTRUCTION = `Ты — личный финансовый советник в приложении FinCopilot. Пользователь живёт в Казахстане, валюта — тенге (₸).
+В сообщении есть блок «ДАННЫЕ» — сводка его финансов, посчитанная приложением. Это единственный источник цифр.
+
+Правила:
+- Отвечай по-русски, дружелюбно и по делу. Обычно 60–180 слов; подробнее — только если просят.
+- Опирайся на конкретные цифры из данных. Не выдумывай суммы и операции. Если данных не хватает — так и скажи и подскажи, что внести.
+- Готовые расчёты (лимит на день, план по целям, срок и переплата по кредитам) бери из данных, не пересчитывай по-своему.
+- Советы — практичные и измеримые: «сократить кафе с 60 000 до 40 000 ₸ в месяц», а не «тратьте меньше».
+- Формат: короткие абзацы, списки через «• », выделение **жирным**. Без таблиц и заголовков.
+- Про покупку конкретных акций, валюты, криптовалюты и других инвестиций не давай персональных рекомендаций: объясни общие принципы и скажи, что ты не лицензированный финансовый консультант.
+- Если вопрос не про деньги — коротко ответь и мягко верни разговор к финансам.`;
+
+export type AdvisorTurn = { role: "user" | "assistant"; text: string };
+
+/** Ответ советника: сводка финансов + недавняя переписка + вопрос */
+export async function askAdvisorAi(context: string, history: AdvisorTurn[], question: string): Promise<string | null> {
+  const ai = getClient();
+  if (!ai) return null;
+
+  const contents = [
+    ...history.map(turn => ({ role: turn.role === "assistant" ? "model" : "user", parts: [{ text: turn.text }] })),
+    { role: "user", parts: [{ text: `ДАННЫЕ:\n${context}\n\nВОПРОС:\n${question}` }] },
+  ];
+  const response = await withRetry(() => ai.models.generateContent({
+    model: MODEL,
+    contents,
+    // Советы требуют рассуждений — здесь размышления средние, а не минимальные
+    config: { systemInstruction: ADVISOR_INSTRUCTION, thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }, maxOutputTokens: 8192 },
+  }));
+  return response.text?.trim() || null;
+}
+
 const merchantResult = z.object({
   items: z.array(z.object({ index: z.number().int(), categoryId: z.string() })),
 });

@@ -14,6 +14,8 @@ import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./d
 import { evaluateCategoryLimit } from "./limits";
 import { applyImport, cancelImport, createKaspiDraft, rememberMerchantCategory } from "./imports";
 import { formatImportApplied, formatImportDraft } from "@/lib/domain/importText";
+import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
+import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
 
 const MAX_VOICE_SECONDS = 60;
 // Ограничение Bot API на скачивание файлов
@@ -80,6 +82,22 @@ async function replyWithCapture(ctx: Context, user: { id: string; timezone: stri
   await ctx.reply(receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(result.transactionId) });
 }
 
+async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>[0], question: string) {
+  await ctx.replyWithChatAction("typing").catch(() => undefined);
+  // Ответ с размышлениями может занять десяток секунд — «печатает» гаснет через 5 с
+  const typing = setInterval(() => ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
+  try {
+    const result = await askAdvisor(user, question, "BOT");
+    const url = appUrl();
+    await ctx.reply(result.ok ? `💬 ${adviceToTelegramHtml(result.answer)}` : ADVISOR_ERRORS[result.reason], {
+      parse_mode: "HTML",
+      reply_markup: url ? new InlineKeyboard().webApp("Продолжить в приложении", `${url}/advisor`) : undefined,
+    });
+  } finally {
+    clearInterval(typing);
+  }
+}
+
 function registerHandlers(bot: Bot) {
   bot.command("start", async ctx => {
     const user = await userFromContext(ctx);
@@ -109,7 +127,9 @@ function registerHandlers(bot: Bot) {
         "/today — сколько можно потратить сегодня",
         "/week — траты за 7 дней",
         "/limits — лимиты по категориям",
+        "/advice — разбор финансов от ИИ-советника",
         "",
+        "💬 Задайте вопрос: <i>на чём я могу сэкономить?</i>",
         "📄 А ещё можно прислать PDF-выписку Kaspi Gold — импортирую операции.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: openAppKeyboard() }
@@ -138,16 +158,34 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.command("help", ctx => ctx.reply(
-    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n\n📄 Пришлите PDF-выписку Kaspi Gold — импортирую операции без дублей.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
+    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold — импортирую операции без дублей.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
     { parse_mode: "HTML" }
   ));
+
+  bot.command(["advice", "ask"], async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const question = ctx.match?.trim();
+    await replyWithAdvice(ctx, user, question || ADVICE_REVIEW_PROMPT);
+  });
 
   bot.on("message:text", async ctx => {
     if (ctx.message.text.startsWith("/")) return;
     const user = await userFromContext(ctx);
     if (!user) return;
+    const text = ctx.message.text;
+    if (looksLikeQuestion(text)) {
+      await replyWithAdvice(ctx, user, text);
+      return;
+    }
     await ctx.replyWithChatAction("typing").catch(() => undefined);
-    await replyWithCapture(ctx, user, await captureText(user, ctx.message.text, "BOT_TEXT"));
+    const result = await captureText(user, text, "BOT_TEXT");
+    // Не трата и без цифр, но похоже на фразу — отвечает советник
+    if (!result.ok && result.reason === "not_understood" && !/\d/.test(text) && text.trim().split(/\s+/).length >= 3) {
+      await replyWithAdvice(ctx, user, text);
+      return;
+    }
+    await replyWithCapture(ctx, user, result);
   });
 
   bot.on("message:voice", async ctx => {

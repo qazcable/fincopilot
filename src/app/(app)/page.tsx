@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Settings } from "lucide-react";
+import { ChevronRight, Settings, Sparkles } from "lucide-react";
 import { requireUser } from "@/lib/server/auth";
 import { getHomeData } from "@/lib/server/queries";
 import { BudgetHero } from "@/components/BudgetHero";
@@ -48,6 +48,19 @@ export default async function HomePage() {
         />
 
         <LimitWarnings items={data.limitWarnings} />
+
+        <Link href="/advisor" className="pressable block">
+          <Card className="flex items-center gap-3 p-4">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent text-accent-fg">
+              <Sparkles className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold">Спросить советника</span>
+              <span className="block truncate text-[13px] text-muted">На чём сэкономить, успею ли к цели, какой кредит гасить</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-faint" />
+          </Card>
+        </Link>
 
         <div className="grid grid-cols-2 gap-3">
           <Link href="/settings" className="pressable block">
