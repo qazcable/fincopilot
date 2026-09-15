@@ -99,7 +99,9 @@ async function withRetry<T>(request: () => Promise<T>): Promise<T> {
       return await request();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const transient = /\b(429|503)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand/i.test(message);
+      // Дневная квота не восстановится за секунды — повторять бессмысленно
+      const dailyQuota = /PerDay/i.test(message);
+      const transient = !dailyQuota && /\b(429|503)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand/i.test(message);
       if (!transient || attempt >= RETRY_DELAYS_MS.length) throw error;
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
     }
@@ -110,7 +112,7 @@ async function withRetry<T>(request: () => Promise<T>): Promise<T> {
  * Категории для названий магазинов из выписки: один запрос на пачку названий.
  * Возвращает индекс названия → id категории; нераспознанные не попадают в результат.
  */
-export async function categorizeMerchants(names: string[], categories: AiCategory[]): Promise<Map<number, string>> {
+export async function categorizeMerchants(names: string[], categories: AiCategory[], batchSize = MERCHANT_BATCH): Promise<Map<number, string>> {
   const ai = getClient();
   const result = new Map<number, string>();
   if (!ai || names.length === 0 || categories.length === 0) return result;
@@ -118,8 +120,8 @@ export async function categorizeMerchants(names: string[], categories: AiCategor
   const categoryIds = categories.map(c => c.id);
   const categoryList = categories.map(c => `${c.id} — ${c.name}`).join("\n");
 
-  for (let start = 0; start < names.length; start += MERCHANT_BATCH) {
-    const batch = names.slice(start, start + MERCHANT_BATCH);
+  for (let start = 0; start < names.length; start += batchSize) {
+    const batch = names.slice(start, start + batchSize);
     const list = batch.map((name, i) => `${start + i}. ${name}`).join("\n");
     try {
       const response = await withRetry(() => ai.models.generateContent({

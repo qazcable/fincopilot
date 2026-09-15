@@ -243,6 +243,44 @@ export async function cancelImport(user: ImportUser, batchId: string) {
   }, { timeout: 30_000 });
 }
 
+/**
+ * Повторный подбор категорий для операций из выписки, оставшихся в «Другое» (например, если ИИ был перегружен).
+ * Ручные правки не трогает: берутся только операции с категорией «Другое» и магазины без выученной категории.
+ */
+export async function retryImportCategories(userId: string, batchSize = 40) {
+  const other = await prisma.category.findFirst({ where: { userId, key: FALLBACK_CATEGORY_KEY.EXPENSE, kind: "EXPENSE" } });
+  if (!other) return { merchants: 0, categorized: 0, updated: 0 };
+
+  const [rows, learned, categories] = await Promise.all([
+    prisma.transaction.findMany({
+      where: { userId, source: "IMPORT", kind: "EXPENSE", categoryId: other.id, note: { not: null } },
+      select: { id: true, note: true },
+    }),
+    prisma.merchantCategory.findMany({ where: { userId }, select: { merchant: true } }),
+    prisma.category.findMany({ where: { userId, kind: "EXPENSE", archivedAt: null }, select: { id: true, name: true, kind: true } }),
+  ]);
+  const known = new Set(learned.map(m => m.merchant));
+  const merchants = [...new Set(rows.map(r => normalizeMerchant(r.note!)))].filter(m => !known.has(m));
+  const aiResult = await categorizeMerchants(merchants, categories, batchSize);
+
+  const byMerchant = new Map<string, string>();
+  aiResult.forEach((categoryId, index) => byMerchant.set(merchants[index], categoryId));
+  if (byMerchant.size > 0) {
+    await prisma.merchantCategory.createMany({
+      data: [...byMerchant].map(([merchant, categoryId]) => ({ userId, merchant, categoryId })),
+      skipDuplicates: true,
+    });
+  }
+
+  let updated = 0;
+  for (const [merchant, categoryId] of byMerchant) {
+    if (categoryId === other.id) continue;
+    const ids = rows.filter(r => normalizeMerchant(r.note!) === merchant).map(r => r.id);
+    updated += (await prisma.transaction.updateMany({ where: { id: { in: ids }, categoryId: other.id }, data: { categoryId } })).count;
+  }
+  return { merchants: merchants.length, categorized: byMerchant.size, updated };
+}
+
 /** Когда пользователь меняет категорию операции из выписки — запоминаем магазин */
 export async function rememberMerchantCategory(userId: string, transactionId: string, categoryId: string | null) {
   if (!categoryId) return;
