@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+prisma/*.db
+prisma/*.db-journal
+cloudflared.exe
+.next
+node_modules
+.agents
+.cursor
+.devin
+.claude
+skills-lock.json

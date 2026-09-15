@@ -46,6 +46,7 @@ cloudflared.exe
 /.cursor/
 /.devin/
 /.claude/skills/
+skills-lock.json
 
 # vercel
 .vercel
