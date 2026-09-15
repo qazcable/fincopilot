@@ -39,9 +39,9 @@ async function categoryTotals(user: DigestUser, from: DayKey, toExclusive: DayKe
       return { emoji: category?.emoji ?? "💸", name: category?.name ?? "Без категории", amount: fromDb(row._sum.amount) };
     })
     .sort((a, b) => b.amount - a.amount);
-  // Переводы людям — только сальдо сверх пришедшего от людей
+  // Переводы людям и наличные — только сальдо сверх пришедшего от людей
   if (net.expense > 0) {
-    items.push({ emoji: "💸", name: "Переводы людям (сальдо)", amount: net.expense });
+    items.push({ emoji: "💸", name: "Переводы и наличные (сальдо)", amount: net.expense });
     items.sort((a, b) => b.amount - a.amount);
   }
 

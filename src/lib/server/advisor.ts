@@ -87,14 +87,14 @@ export async function buildAdvisorContext(user: AdvisorUser) {
   }
 
   lines.push("", "ДОХОДЫ И РАСХОДЫ ПО МЕСЯЦАМ");
-  lines.push("Переводы между своими счетами не учтены. Через счета пользователя друзья часто «прогоняют» деньги (пришло — отправил дальше частями или оплатил), поэтому переводы людям считаются по сальдо: в расходах только то, что ушло сверх пришедшего от людей, в доходах — наоборот.");
+  lines.push("Переводы между своими счетами не учтены. Через счета пользователя друзья часто «прогоняют» деньги (пришло — отправил дальше частями, снял и отдал наличными или оплатил), поэтому переводы людям и снятие наличных считаются по сальдо: в расходах только то, что ушло сверх пришедшего от людей, в доходах — наоборот. Покупки всегда считаются расходами.");
   for (const m of monthly) {
     const current = m.year === year && m.month === month;
-    lines.push(`• ${monthName(m.month)} ${m.year}${current ? ` (текущий, ${day} дн.)` : ""}: расходы ${money(m.expense)}, доходы ${money(m.income)} (переводы людям: пришло ${money(m.peer.in)}, ушло ${money(m.peer.out)})`);
+    lines.push(`• ${monthName(m.month)} ${m.year}${current ? ` (текущий, ${day} дн.)` : ""}: расходы ${money(m.expense)}, доходы ${money(m.income)} (от людей пришло ${money(m.peer.in)}, людям и наличными ушло ${money(m.peer.out)})`);
   }
 
-  // «Переводы людям» по категориям не показываем — они выше, по сальдо
-  const categories = limits.filter(c => c.name !== "Переводы людям" && (c.spent > 0 || c.averageSpent > 0 || c.limit !== null)).sort((a, b) => b.spent - a.spent);
+  // Переводы людям и наличные по категориям не показываем — они выше, по сальдо
+  const categories = limits.filter(c => c.name !== "Переводы людям" && c.name !== "Снятие наличных" && (c.spent > 0 || c.averageSpent > 0 || c.limit !== null)).sort((a, b) => b.spent - a.spent);
   if (categories.length > 0) {
     lines.push("", `РАСХОДЫ ПО КАТЕГОРИЯМ: этот месяц / среднее в месяц за 3 прошлых месяца / лимит`);
     for (const c of categories) {

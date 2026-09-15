@@ -69,7 +69,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
               </div>
               {(stats.peer.in > 0 || stats.peer.out > 0) && (
                 <p className="mt-3 rounded-2xl bg-surface-2 px-3.5 py-2.5 text-[12px] leading-snug text-muted">
-                  🔄 Переводы людям по сальдо: пришло <Money value={stats.peer.in} className="font-medium text-fg" />, ушло <Money value={stats.peer.out} className="font-medium text-fg" />.
+                  🔄 Переводы и наличные по сальдо: от людей пришло <Money value={stats.peer.in} className="font-medium text-fg" />, людям и наличными ушло <Money value={stats.peer.out} className="font-medium text-fg" />.
                   {" "}{stats.peer.out > stats.peer.in ? "В расходах — только разница." : stats.peer.in > stats.peer.out ? "В доходах — только разница." : "Взаимно погасились."}
                 </p>
               )}

@@ -76,13 +76,16 @@ export const NOT_TRANSIT = { NOT: { category: { key: { in: TRANSIT_KEYS } } } };
 
 // Переводы людям считаются по сальдо: через счета часто проходят чужие деньги (друзья «прогоняют» суммы),
 // поэтому расход — только то, что ушло сверх пришедшего от людей, а доход — наоборот
-export const PEER_OUT_KEY = "transfers";
+// Чужие деньги уходят дальше переводом или снятием наличных (отдать другу наличкой) — оба считаются по сальдо
+export const PEER_OUT_KEYS = ["transfers", "cash"];
 export const PEER_IN_KEY = "gift_in";
 
-/** Условия Prisma: исходящие переводы людям; входящие переводы от людей (возвраты и кешбэк — не переводы) */
-export const PEER_OUT_WHERE = { kind: "EXPENSE", category: { key: PEER_OUT_KEY } };
+/** Условия Prisma: переводы людям и снятие наличных; входящие переводы от людей (возвраты и кешбэк — не переводы) */
+export const PEER_OUT_WHERE = { kind: "EXPENSE", category: { key: { in: PEER_OUT_KEYS } } };
 export const PEER_IN_WHERE = { kind: "INCOME", category: { key: PEER_IN_KEY }, NOT: [{ note: { startsWith: "Возврат" } }, { note: { startsWith: "Кешбэк" } }] };
-export const NOT_PEER_OUT = { NOT: { category: { key: PEER_OUT_KEY } } };
+export const NOT_PEER_OUT = { NOT: { category: { key: { in: PEER_OUT_KEYS } } } };
+
+export const isPeerOut = (key: string | null | undefined) => key != null && PEER_OUT_KEYS.includes(key);
 
 export function isPeerIn(key: string | null | undefined, note: string | null | undefined) {
   return key === PEER_IN_KEY && !/^(Возврат|Кешбэк)/.test(note ?? "");

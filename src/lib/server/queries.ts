@@ -8,7 +8,7 @@ import { limitProgress } from "@/lib/domain/limits";
 import type { AppUser } from "./auth";
 import { addDays, addMonths, dayKeyOf, instantToLocalInput, monthRange, parseKey } from "@/lib/domain/dates";
 import { fromDb } from "@/lib/domain/money";
-import { NOT_PEER_OUT, NOT_TRANSIT, PEER_OUT_KEY, isPeerIn, isTransitKey, netPeer } from "@/lib/domain/constants";
+import { NOT_PEER_OUT, NOT_TRANSIT, isPeerIn, isPeerOut, isTransitKey, netPeer } from "@/lib/domain/constants";
 import { peerSums } from "./peer";
 
 export type CategoryDto = { id: string; name: string; emoji: string; color: string; kind: string; key?: string | null };
@@ -144,9 +144,9 @@ export async function getStats(user: AppUser, year: number, month: number) {
   ]);
 
   const items = transactions.map(tx => toTransactionDto(tx, user.timezone));
-  const peerOutItems = items.filter(t => t.kind === "EXPENSE" && !t.transit && t.category?.key === PEER_OUT_KEY);
+  const peerOutItems = items.filter(t => t.kind === "EXPENSE" && !t.transit && isPeerOut(t.category?.key));
   const peerInItems = items.filter(t => t.kind === "INCOME" && !t.transit && isPeerIn(t.category?.key, t.note));
-  const expenses = items.filter(t => t.kind === "EXPENSE" && !t.transit && t.category?.key !== PEER_OUT_KEY);
+  const expenses = items.filter(t => t.kind === "EXPENSE" && !t.transit && !isPeerOut(t.category?.key));
   const peer = {
     out: peerOutItems.reduce((s, t) => s + t.amount, 0),
     in: peerInItems.reduce((s, t) => s + t.amount, 0),
@@ -161,9 +161,10 @@ export async function getStats(user: AppUser, year: number, month: number) {
     entry.count++;
     byCategory.set(key, entry);
   }
-  // Переводы людям в расходах — только то, что ушло сверх пришедшего от людей
-  if (net.expense > 0 && peerOutItems[0]) {
-    byCategory.set(peerOutItems[0].category!.id, { category: peerOutItems[0].category, total: net.expense, count: peerOutItems.length });
+  // Переводы людям и наличные в расходах — только то, что ушло сверх пришедшего от людей
+  const peerCategory = peerOutItems.find(t => t.category?.key === "transfers")?.category ?? peerOutItems[0]?.category;
+  if (net.expense > 0 && peerCategory) {
+    byCategory.set(peerCategory.id, { category: { ...peerCategory, name: "Переводы и наличные (сальдо)" }, total: net.expense, count: peerOutItems.length });
   }
 
   const byDay = new Map<string, number>();
