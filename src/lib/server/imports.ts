@@ -442,13 +442,11 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
       return finalSummary;
     }, { timeout: 60_000, maxWait: 10_000 });
 
-    // Переводы между уже загруженными картами (например, «С карты другого банка» в Kaspi и «Перевод» в БЦК),
-    // затем транзит друзей среди оставшихся переводов
+    // Переводы между уже загруженными картами (например, «С карты другого банка» в Kaspi и «Перевод» в БЦК).
+    // Транзит друзей автоматически не размечается: совпадения круглых сумм часто случайны (см. markAllTransit)
     try {
       const relinked = await relinkOwnTransfers(user, batch.id);
       if (relinked > 0) result.linkedTransfers = (result.linkedTransfers ?? 0) + relinked;
-      const transit = await markTransit(user, batch.id);
-      if (transit > 0) result.transitPairs = transit;
     } catch (error) {
       console.error("Relink transfers failed:", error instanceof Error ? error.message : String(error));
     }
