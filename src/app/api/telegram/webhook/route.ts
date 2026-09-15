@@ -2,6 +2,9 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { errorMessage, getBot } from "@/lib/server/bot";
 
+// Импорт годовой выписки с подбором категорий через ИИ может занимать больше минуты
+export const maxDuration = 300;
+
 function secretMatches(received: string | null) {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (!expected || !received) return false;

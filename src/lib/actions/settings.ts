@@ -31,8 +31,18 @@ export async function completeOnboarding(input: z.infer<typeof onboardingSchema>
   const { balance: startBalance, incomeDay, incomeAmount } = parsed.data;
 
   await prisma.$transaction(async tx => {
-    const account = await tx.account.findFirst({ where: { userId: user.id, archivedAt: null }, orderBy: { createdAt: "asc" } });
-    if (account) await tx.account.update({ where: { id: account.id }, data: { openingBalance: toDb(startBalance) } });
+    const current = (await getAccountBalances(user.id, tx)).find(a => a.isDefault);
+    if (current) {
+      const hasHistory = current.balance !== current.openingBalance;
+      // Введённый баланс — текущий: учитываем уже внесённые операции (например, из выписки).
+      // Пропуск шага (0) при уже сверенной истории баланс не трогает.
+      if (startBalance !== 0 || !hasHistory) {
+        await tx.account.update({
+          where: { id: current.id },
+          data: { openingBalance: toDb(current.openingBalance + startBalance - current.balance) },
+        });
+      }
+    }
     if (incomeDay) {
       await tx.recurringIncome.create({
         data: { userId: user.id, title: "Зарплата", dayOfMonth: incomeDay, amount: incomeAmount ? toDb(incomeAmount) : null },

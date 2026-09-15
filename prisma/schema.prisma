@@ -44,6 +44,8 @@ model User {
   payments         ScheduledPayment[]
   incomes          RecurringIncome[]
   limitAlerts      CategoryLimitAlert[]
+  imports          ImportBatch[]
+  merchants        MerchantCategory[]
 }
 
 model Account {
@@ -81,6 +83,7 @@ model Category {
   archivedAt   DateTime?
   transactions Transaction[]
   limitAlerts  CategoryLimitAlert[]
+  merchants    MerchantCategory[]
 
   @@unique([userId, key])
   @@index([userId, kind])
@@ -104,9 +107,53 @@ model Transaction {
   rawInput           String?
   scheduledPaymentId String?           @unique
   scheduledPayment   ScheduledPayment? @relation(fields: [scheduledPaymentId], references: [id], onDelete: SetNull)
+  // Импорт из выписки: пакет (для отмены) и стабильный ключ строки (защита от повторного импорта)
+  importBatchId      String?
+  importBatch        ImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importKey          String?
   createdAt          DateTime          @default(now())
 
+  @@unique([userId, importKey])
   @@index([userId, occurredAt])
+  @@index([importBatchId])
+}
+
+model ImportBatch {
+  id                     String        @id @default(cuid())
+  userId                 String
+  user                   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId              String
+  // KASPI_GOLD
+  bank                   String
+  // DRAFT | APPLIED | CANCELLED
+  status                 String        @default("DRAFT")
+  periodFrom             String?
+  periodTo               String?
+  closingBalance         BigInt?
+  // Начальный остаток счёта до импорта — чтобы откат вернул баланс как был
+  previousOpeningBalance BigInt?
+  // Разобранные строки выписки с решениями (JSON)
+  rows                   Json
+  summary                Json
+  createdAt              DateTime      @default(now())
+  appliedAt              DateTime?
+  cancelledAt            DateTime?
+  transactions           Transaction[]
+
+  @@index([userId, createdAt])
+}
+
+// Выученная категория магазина: подбирается при импорте и уточняется, когда пользователь меняет категорию
+model MerchantCategory {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant   String
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, merchant])
 }
 
 model Obligation {

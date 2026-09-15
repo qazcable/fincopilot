@@ -3,6 +3,8 @@ import { requireUser } from "@/lib/server/auth";
 import { getSettingsData } from "@/lib/server/queries";
 import { BackButton } from "@/components/TelegramBackButton";
 import { AccountsSection, IncomesSection, PreferencesSection, ShortcutSection } from "@/components/settings/SettingsSections";
+import { ImportSection } from "@/components/settings/ImportSection";
+import { listImports } from "@/lib/server/imports";
 
 async function appOrigin() {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
@@ -12,7 +14,7 @@ async function appOrigin() {
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const [data, origin] = await Promise.all([getSettingsData(user), appOrigin()]);
+  const [data, origin, imports] = await Promise.all([getSettingsData(user), appOrigin(), listImports(user.id)]);
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME;
 
   return (
@@ -23,6 +25,7 @@ export default async function SettingsPage() {
       <div className="space-y-7">
         <AccountsSection accounts={data.accounts} />
         <IncomesSection incomes={data.incomes} />
+        <ImportSection imports={imports} botUsername={botUsername} />
         <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} />
         <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} />
 

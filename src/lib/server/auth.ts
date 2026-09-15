@@ -25,6 +25,16 @@ export async function requireUser() {
   return user;
 }
 
+/** Досоздаёт стандартные категории, появившиеся в новых версиях (например, «Переводы людям»). Идемпотентно. */
+export async function ensureDefaultCategories(userId: string) {
+  await prisma.category.createMany({
+    data: DEFAULT_CATEGORIES.map((c, index) => ({
+      userId, key: c.key, name: c.name, kind: c.kind, emoji: c.emoji, color: c.color, sortOrder: index,
+    })),
+    skipDuplicates: true,
+  });
+}
+
 /** Находит пользователя по Telegram или создаёт со стандартными категориями и счётом */
 export async function upsertTelegramUser(tgUser: TelegramUser, options: { keepName?: boolean } = {}) {
   const telegramId = BigInt(tgUser.id);

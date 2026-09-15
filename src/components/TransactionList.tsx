@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Mic, MessageCircle, Smartphone, CalendarCheck } from "lucide-react";
+import { Mic, MessageCircle, Smartphone, CalendarCheck, FileText } from "lucide-react";
 import { useTransactionSheet } from "./TransactionSheet";
 import { CategoryIcon, Money } from "./ui/primitives";
 import type { TransactionDto } from "@/lib/server/queries";
@@ -12,6 +12,7 @@ const SOURCE_ICON: Record<string, { icon: typeof Mic; label: string } | undefine
   BOT_TEXT: { icon: MessageCircle, label: "Через бота" },
   SHORTCUT: { icon: Smartphone, label: "Быстрая команда" },
   PAYMENT: { icon: CalendarCheck, label: "Платёж по графику" },
+  IMPORT: { icon: FileText, label: "Из выписки" },
 };
 
 export function TransactionRow({ tx }: { tx: TransactionDto }) {

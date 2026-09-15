@@ -1,7 +1,7 @@
 export const TX_KINDS = ["EXPENSE", "INCOME"] as const;
 export type TxKind = (typeof TX_KINDS)[number];
 
-export const TX_SOURCES = ["APP", "BOT_TEXT", "BOT_VOICE", "SHORTCUT", "PAYMENT"] as const;
+export const TX_SOURCES = ["APP", "BOT_TEXT", "BOT_VOICE", "SHORTCUT", "PAYMENT", "IMPORT"] as const;
 export type TxSource = (typeof TX_SOURCES)[number];
 
 export const ACCOUNT_KINDS = {
@@ -38,16 +38,18 @@ export type DefaultCategory = {
 };
 
 export const DEFAULT_CATEGORIES: DefaultCategory[] = [
-  { key: "food", name: "Продукты", kind: "EXPENSE", emoji: "🛒", color: "#22C55E", keywords: ["продукт", "магнум", "magnum", "small", "смолл", "галмарт", "galmart", "anvar", "анвар", "супермаркет", "магазин", "хлеб", "молоко", "овощ", "фрукт", "мясо", "вкусвилл", "arbuz", "арбуз"] },
-  { key: "cafe", name: "Кафе и доставка", kind: "EXPENSE", emoji: "☕", color: "#F59E0B", keywords: ["кофе", "кафе", "ресторан", "обед", "ужин", "завтрак", "ланч", "бургер", "пицц", "суши", "шаурм", "доставк", "wolt", "glovo", "starbucks", "кофейн", "бар"] },
-  { key: "transport", name: "Транспорт", kind: "EXPENSE", emoji: "🚕", color: "#3B82F6", keywords: ["такси", "яндекс go", "yandex", "uber", "indrive", "индрайв", "автобус", "метро", "бензин", "заправк", "парковк", "проезд", "онай", "onay"] },
-  { key: "home", name: "Дом и ЖКХ", kind: "EXPENSE", emoji: "🏠", color: "#8B5CF6", keywords: ["аренд", "квартир", "коммунал", "жкх", "свет", "газ", "вода", "интернет", "ремонт"] },
+  { key: "food", name: "Продукты", kind: "EXPENSE", emoji: "🛒", color: "#22C55E", keywords: ["продукт", "магнум", "magnum", "small", "смолл", "галмарт", "galmart", "anvar", "анвар", "супермаркет", "магазин", "хлеб", "молоко", "овощ", "фрукт", "мясо", "вкусвилл", "arbuz", "арбуз", "superprice", "toimart", "korzinka", "корзинка", "ramstore", "живая вода"] },
+  { key: "cafe", name: "Кафе и доставка", kind: "EXPENSE", emoji: "☕", color: "#F59E0B", keywords: ["кофе", "кафе", "ресторан", "обед", "ужин", "завтрак", "ланч", "бургер", "пицц", "суши", "шаурм", "доставк", "wolt", "glovo", "starbucks", "кофейн", "бар", "coffee", "kfc", "mcdonald", "burger", "dodo", "додо", "chocofood", "yandex.eda", "яндекс еда", "бистро"] },
+  { key: "transport", name: "Транспорт", kind: "EXPENSE", emoji: "🚕", color: "#3B82F6", keywords: ["такси", "яндекс go", "yandex.go", "yandex go", "yandex.taxi", "uber", "indrive", "индрайв", "автобус", "метро", "бензин", "заправк", "парковк", "проезд", "онай", "onay", "азс", "helios", "sinooil", "qazaq oil", "газпром", "gazprom", "avtobys"] },
+  { key: "home", name: "Дом и ЖКХ", kind: "EXPENSE", emoji: "🏠", color: "#8B5CF6", keywords: ["аренд", "квартир", "коммунал", "жкх", "электроэнерг", "энергосбыт", "водоканал", "газоснаб", "интернет", "казахтелеком", "kazakhtelecom", "ремонт"] },
   { key: "health", name: "Здоровье", kind: "EXPENSE", emoji: "💊", color: "#EF4444", keywords: ["аптек", "лекарств", "врач", "клиник", "анализ", "стоматолог", "зуб"] },
-  { key: "fun", name: "Развлечения", kind: "EXPENSE", emoji: "🎬", color: "#EC4899", keywords: ["кино", "концерт", "игр", "steam", "подписк", "netflix", "spotify", "кальян", "боулинг", "театр"] },
+  { key: "fun", name: "Развлечения", kind: "EXPENSE", emoji: "🎬", color: "#EC4899", keywords: ["кино", "концерт", "игр", "steam", "подписк", "netflix", "spotify", "кальян", "боулинг", "театр", "telegram", "youtube", "apple.com", "google", "yandex.plus", "chaplin", "kinopark"] },
   { key: "shopping", name: "Покупки", kind: "EXPENSE", emoji: "🛍️", color: "#14B8A6", keywords: ["одежд", "обув", "кроссовк", "техник", "wildberries", "вайлдберриз", "ozon", "озон", "kaspi магазин", "подарок"] },
   { key: "mobile", name: "Связь", kind: "EXPENSE", emoji: "📱", color: "#06B6D4", keywords: ["связь", "телефон", "мобильн", "beeline", "билайн", "kcell", "tele2", "activ", "altel"] },
   { key: "sport", name: "Спорт", kind: "EXPENSE", emoji: "🏋️", color: "#84CC16", keywords: ["спортзал", "фитнес", "зал", "бассейн", "тренир", "абонемент"] },
   { key: "debts", name: "Кредиты и счета", kind: "EXPENSE", emoji: "🧾", color: "#64748B", keywords: ["кредит", "кредитк", "рассрочк", "ипотек", "долг"] },
+  { key: "transfers", name: "Переводы людям", kind: "EXPENSE", emoji: "💸", color: "#F97316", keywords: ["перевод", "перевел", "перевёл", "скинул", "отправил"] },
+  { key: "cash", name: "Снятие наличных", kind: "EXPENSE", emoji: "🏧", color: "#78716C", keywords: ["банкомат", "наличн", "снял", "снятие"] },
   { key: "other", name: "Другое", kind: "EXPENSE", emoji: "📦", color: "#A1A1AA", keywords: [] },
   { key: "salary", name: "Зарплата", kind: "INCOME", emoji: "💼", color: "#10B981", keywords: ["зарплат", "зп", "аванс", "оклад"] },
   { key: "side", name: "Подработка", kind: "INCOME", emoji: "🧑‍💻", color: "#0EA5E9", keywords: ["подработк", "фриланс", "заказ", "гонорар"] },

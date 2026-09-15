@@ -84,3 +84,79 @@ confidence: 0..1. Если сумма не названа или речь не �
   const category = categories.find(c => c.id === parsed.categoryId && c.kind === parsed.kind);
   return { amount, kind: parsed.kind, categoryId: category?.id ?? null, note: parsed.note.trim().slice(0, 200) };
 }
+
+const merchantResult = z.object({
+  items: z.array(z.object({ index: z.number().int(), categoryId: z.string() })),
+});
+
+const MERCHANT_BATCH = 120;
+const RETRY_DELAYS_MS = [2_000, 6_000];
+
+/** Повтор запроса при временной перегрузке модели (429/503) */
+async function withRetry<T>(request: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const transient = /\b(429|503)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand/i.test(message);
+      if (!transient || attempt >= RETRY_DELAYS_MS.length) throw error;
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+/**
+ * Категории для названий магазинов из выписки: один запрос на пачку названий.
+ * Возвращает индекс названия → id категории; нераспознанные не попадают в результат.
+ */
+export async function categorizeMerchants(names: string[], categories: AiCategory[]): Promise<Map<number, string>> {
+  const ai = getClient();
+  const result = new Map<number, string>();
+  if (!ai || names.length === 0 || categories.length === 0) return result;
+
+  const categoryIds = categories.map(c => c.id);
+  const categoryList = categories.map(c => `${c.id} — ${c.name}`).join("\n");
+
+  for (let start = 0; start < names.length; start += MERCHANT_BATCH) {
+    const batch = names.slice(start, start + MERCHANT_BATCH);
+    const list = batch.map((name, i) => `${start + i}. ${name}`).join("\n");
+    try {
+      const response = await withRetry(() => ai.models.generateContent({
+        model: MODEL,
+        contents: [{ role: "user", parts: [{ text: list }] }],
+        config: {
+          systemInstruction: `Это названия получателей платежей по карте Kaspi (Казахстан): магазины, кафе, ИП, сервисы.
+Для каждого номера выбери категорию расходов из списка. ИП и ТОО с непонятным названием — «Другое».
+Категории:
+${categoryList}`,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              items: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: { index: { type: Type.INTEGER }, categoryId: { type: Type.STRING, enum: categoryIds } },
+                  required: ["index", "categoryId"],
+                },
+              },
+            },
+            required: ["items"],
+          },
+        },
+      }));
+      const parsed = merchantResult.parse(JSON.parse(response.text ?? ""));
+      for (const item of parsed.items) {
+        if (item.index >= start && item.index < start + batch.length && categoryIds.includes(item.categoryId)) {
+          result.set(item.index, item.categoryId);
+        }
+      }
+    } catch (error) {
+      // Пачка без ИИ-категорий получит «Другое» — импорт не должен падать из-за ИИ
+      console.error("Merchant categorization failed:", error instanceof Error ? error.message : String(error));
+    }
+  }
+  return result;
+}

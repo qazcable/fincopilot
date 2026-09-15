@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
 import { createTransaction, deleteTransaction, resolveCategoryId } from "@/lib/server/ledger";
 import { notifyCategoryLimit } from "@/lib/server/bot";
+import { rememberMerchantCategory } from "@/lib/server/imports";
 import type { TxKind } from "@/lib/domain/constants";
 import { localDateTimeToInstant } from "@/lib/domain/dates";
 import { MAX_AMOUNT_MINOR, toDb } from "@/lib/domain/money";
@@ -60,6 +61,8 @@ export async function saveTransaction(input: TransactionInput): Promise<ActionRe
       },
     });
     savedCategoryId = updated.kind === "EXPENSE" ? updated.categoryId : null;
+    // Исправленная категория операции из выписки запоминается для этого магазина
+    if (existing.categoryId !== updated.categoryId) await rememberMerchantCategory(user.id, updated.id, updated.categoryId);
   } else {
     const created = await createTransaction(user.id, {
       kind: data.kind,

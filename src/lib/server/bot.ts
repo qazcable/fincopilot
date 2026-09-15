@@ -12,8 +12,12 @@ import { addDays, dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
 import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./digests";
 import { evaluateCategoryLimit } from "./limits";
+import { applyImport, cancelImport, createKaspiDraft, rememberMerchantCategory } from "./imports";
+import { formatImportApplied, formatImportDraft } from "@/lib/domain/importText";
 
 const MAX_VOICE_SECONDS = 60;
+// Ограничение Bot API на скачивание файлов
+const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 
 let botInstance: Bot | null = null;
 let initPromise: Promise<void> | null = null;
@@ -105,6 +109,8 @@ function registerHandlers(bot: Bot) {
         "/today — сколько можно потратить сегодня",
         "/week — траты за 7 дней",
         "/limits — лимиты по категориям",
+        "",
+        "📄 А ещё можно прислать PDF-выписку Kaspi Gold — импортирую операции.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: openAppKeyboard() }
     );
@@ -132,7 +138,7 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.command("help", ctx => ctx.reply(
-    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
+    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n\n📄 Пришлите PDF-выписку Kaspi Gold — импортирую операции без дублей.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
     { parse_mode: "HTML" }
   ));
 
@@ -162,6 +168,80 @@ function registerHandlers(bot: Bot) {
     const audio = Buffer.from(await response.arrayBuffer());
     const mimeType = ctx.message.voice.mime_type || "audio/ogg";
     await replyWithCapture(ctx, user, await captureAudio(user, audio, mimeType, "BOT_VOICE"));
+  });
+
+  // 📄 Выписка Kaspi в PDF
+  bot.on("message:document", async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const document = ctx.message.document;
+    const isPdf = document.mime_type === "application/pdf" || document.file_name?.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      await ctx.reply("Пришлите выписку Kaspi в PDF: Kaspi → Kaspi Gold → Выписка → Поделиться → этот бот.");
+      return;
+    }
+    if ((document.file_size ?? 0) > MAX_DOCUMENT_BYTES) {
+      await ctx.reply("Файл больше 20 МБ — выберите период покороче.");
+      return;
+    }
+
+    const progress = await ctx.reply("📄 Разбираю выписку…");
+    const edit = (text: string, reply_markup?: InlineKeyboard) =>
+      ctx.api.editMessageText(progress.chat.id, progress.message_id, text, { parse_mode: "HTML", reply_markup });
+
+    try {
+      const file = await ctx.getFile();
+      const response = await fetch(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`);
+      if (!response.ok) throw new Error(`download failed: ${response.status}`);
+      const result = await createKaspiDraft(user, new Uint8Array(await response.arrayBuffer()));
+
+      if (!result.ok) {
+        await edit(result.reason === "not_kaspi"
+          ? "Это не похоже на выписку Kaspi Gold. Выгрузите её в приложении Kaspi: Kaspi Gold → Выписка → Поделиться."
+          : "В выписке не нашлось операций за выбранный период.");
+        return;
+      }
+      const keyboard = result.summary.toImport > 0
+        ? new InlineKeyboard().text(`✅ Импортировать ${result.summary.toImport}`, `ia:${result.batchId}`).text("Отмена", `ix:${result.batchId}`)
+        : undefined;
+      await edit(formatImportDraft(result.summary), keyboard);
+    } catch (error) {
+      console.error("Statement import failed:", errorMessage(error));
+      await edit("Не получилось разобрать файл 😕 Попробуйте выгрузить выписку ещё раз.").catch(() => undefined);
+    }
+  });
+
+  bot.callbackQuery(/^ia:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    await ctx.answerCallbackQuery("Импортирую…");
+    await ctx.editMessageText("⏳ Импортирую и подбираю категории… Это займёт до минуты.").catch(() => undefined);
+    try {
+      const result = await applyImport(user, ctx.match[1]);
+      if (!result.ok) {
+        await ctx.editMessageText(result.reason === "cancelled" ? "Импорт был отменён." : "Этот импорт уже выполнен.");
+        return;
+      }
+      await ctx.editMessageText(formatImportApplied(result.summary), {
+        parse_mode: "HTML",
+        reply_markup: appUrl()
+          ? new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`).row().webApp("Открыть историю", `${appUrl()}/history`)
+          : new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`),
+      });
+    } catch (error) {
+      console.error("Apply import failed:", errorMessage(error));
+      await ctx.editMessageText("Не получилось импортировать 😕 Черновик сохранён — пришлите выписку ещё раз.").catch(() => undefined);
+    }
+  });
+
+  bot.callbackQuery(/^i[xu]:(\w+)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const result = await cancelImport(user, ctx.match[1]);
+    await ctx.answerCallbackQuery(result ? "Отменено" : "Уже отменено");
+    if (result) {
+      await ctx.editMessageText(result.wasApplied ? `↩️ Импорт отменён: удалено операций — ${result.removed}, баланс карты возвращён.` : "Импорт отменён.");
+    }
   });
 
   // ↩️ Отменить
@@ -206,6 +286,7 @@ function registerHandlers(bot: Bot) {
     if (!tx || !category) return ctx.answerCallbackQuery("Не получилось");
 
     await prisma.transaction.update({ where: { id: tx.id }, data: { categoryId: category.id } });
+    await rememberMerchantCategory(user.id, tx.id, category.id);
     const receipt = await buildReceipt(user, tx.id);
     await ctx.answerCallbackQuery(`${category.emoji} ${category.name}`);
     if (receipt) await ctx.editMessageText(receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(tx.id) });

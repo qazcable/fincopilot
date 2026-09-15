@@ -21,8 +21,9 @@ export function matchCategoryKey(text: string, kind: TxKind): string | null {
   const tokens = words(text);
   for (const category of DEFAULT_CATEGORIES) {
     if (category.kind !== kind) continue;
+    // Ключ из нескольких слов или с точкой («яндекс go», «yandex.eda») ищется подстрокой, одно слово — по началу слова
     const hit = category.keywords.some(keyword =>
-      keyword.includes(" ") ? lower.includes(keyword) : tokens.some(token => token.startsWith(keyword))
+      /[^\p{L}\p{N}]/u.test(keyword) ? lower.includes(keyword) : tokens.some(token => token.startsWith(keyword))
     );
     if (hit) return category.key;
   }
