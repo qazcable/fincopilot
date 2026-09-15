@@ -7,7 +7,7 @@ import { extractPdfItems } from "./pdf";
 import { categorizeMerchants } from "./ai";
 import { findManualDuplicates, normalizeMerchant, type KaspiDecision, type KaspiRow } from "@/lib/domain/kaspi";
 import {
-  BANKS, classifyStatementRow, detectStatement, matchOwnTransfers, mentionsOwner, statementImportKeys,
+  BANKS, classifyStatementRow, detectStatement, matchOwnTransfers, mentionsOwner, ownTransferSignal, pairOwnTransfers, statementImportKeys,
   type BankCode, type ParsedStatement, type StatementDecision, type TransferCandidate, type TransferCounterpart,
 } from "@/lib/domain/statements";
 import { addDays, dayKeyOf, daysBetween, localDateTimeToInstant, startOfDayInstant } from "@/lib/domain/dates";
@@ -442,6 +442,14 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
       return finalSummary;
     }, { timeout: 60_000, maxWait: 10_000 });
 
+    // Переводы между уже загруженными картами (например, «С карты другого банка» в Kaspi и «Перевод» в БЦК)
+    try {
+      const relinked = await relinkOwnTransfers(user, batch.id);
+      if (relinked > 0) result.linkedTransfers = (result.linkedTransfers ?? 0) + relinked;
+    } catch (error) {
+      console.error("Relink transfers failed:", error instanceof Error ? error.message : String(error));
+    }
+
     return { ok: true, summary: result };
   } catch (error) {
     // Счёт, созданный для этого импорта, не должен остаться пустым
@@ -449,6 +457,92 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
     await prisma.importBatch.updateMany({ where: { id: batchId, status: "APPLYING" }, data: { status: "DRAFT" } });
     throw error;
   }
+}
+
+/**
+ * Связывает уже внесённые из выписок операции разных карт в переводы: расход на одной карте + такое же поступление
+ * на другой (см. pairOwnTransfers). Расход становится переводом, поступление удаляется — балансы не меняются.
+ * Всё, что изменено, сохраняется в импорт `batchId`, чтобы его отмена вернула операции.
+ */
+async function relinkOwnTransfers(user: ImportUser, batchId: string) {
+  const pairs = await findOwnTransferPairs(user);
+  if (pairs.length === 0) return 0;
+
+  await prisma.$transaction(async tx => {
+    const batch = await tx.importBatch.findUniqueOrThrow({ where: { id: batchId } });
+    const summary = summaryOf(batch);
+    const links: ImportLink[] = [...(summary.links ?? [])];
+    const keys = [...(summary.linkedKeys ?? [])];
+    for (const { out, incoming } of pairs) {
+      const t = incoming.tx;
+      links.push({ txId: out.id, before: { kind: out.tx.kind, accountId: out.tx.accountId, toAccountId: out.tx.toAccountId, categoryId: out.tx.categoryId } });
+      links.push({
+        restore: {
+          id: t.id, accountId: t.accountId, categoryId: t.categoryId, kind: t.kind, amount: t.amount.toString(), occurredAt: t.occurredAt.toISOString(),
+          note: t.note, source: t.source, rawInput: t.rawInput, importBatchId: t.importBatchId, importKey: t.importKey,
+        },
+      });
+      if (t.importKey) keys.push(t.importKey);
+      await tx.transaction.update({ where: { id: out.id }, data: { kind: "TRANSFER", categoryId: null, toAccountId: incoming.accountId } });
+      await tx.transaction.delete({ where: { id: t.id } });
+    }
+    await tx.importBatch.update({
+      where: { id: batchId },
+      data: {
+        summary: { ...summary, links, linkedKeys: keys, linkedTransfers: (summary.linkedTransfers ?? 0) + pairs.length } as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }, { timeout: 60_000 });
+  return pairs.length;
+}
+
+/** Найденные пары переводов между своими картами (без изменений в базе) */
+export async function findOwnTransferPairs(user: ImportUser) {
+  const [owner, accounts, transactions] = await Promise.all([
+    prisma.importBatch.findMany({ where: { userId: user.id, status: "APPLIED" }, orderBy: { createdAt: "desc" }, select: { summary: true } })
+      .then(batches => batches.map(b => summaryOf(b).owner).find(Boolean) ?? null),
+    prisma.account.findMany({ where: { userId: user.id }, select: { id: true, name: true } }),
+    prisma.transaction.findMany({
+      where: {
+        userId: user.id,
+        source: "IMPORT",
+        scheduledPaymentId: null,
+        OR: [
+          { kind: "EXPENSE", category: { key: { in: TRANSFER_EXPENSE_KEYS } } },
+          { kind: "INCOME", category: { key: { in: TRANSFER_INCOME_KEYS } } },
+        ],
+      },
+    }),
+  ]);
+  const nameOf = (id: string) => accounts.find(a => a.id === id)?.name ?? "";
+  const items = transactions.map(t => ({
+    id: t.id,
+    accountId: t.accountId,
+    amount: t.kind === "INCOME" ? fromDb(t.amount) : -fromDb(t.amount),
+    day: dayKeyOf(t.occurredAt, user.timezone),
+    text: `${t.note ?? ""} ${t.rawInput ?? ""}`,
+    tx: t,
+  }));
+  return pairOwnTransfers(
+    items,
+    (out, incoming) => Math.max(ownTransferSignal(out.text, owner, nameOf(incoming.accountId)), ownTransferSignal(incoming.text, owner, nameOf(out.accountId))),
+    daysBetween
+  );
+}
+
+/** Разовое связывание переводов по всей истории — отдельной записью, которую можно отменить в настройках */
+export async function relinkAllOwnTransfers(user: ImportUser) {
+  const account = await getDefaultAccount(user.id);
+  const empty: ImportSummary = {
+    bank: "RELINK", bankTitle: "Связь переводов между картами", cardMask: null, periodFrom: null, periodTo: null, closingBalance: null,
+    total: 0, toImport: 0, alreadyImported: 0, manualDuplicates: 0, skippedOwn: 0, income: 0, expense: 0, needAi: 0, imported: 0,
+  };
+  const batch = await prisma.importBatch.create({
+    data: { userId: user.id, accountId: account.id, bank: "RELINK", status: "APPLIED", appliedAt: new Date(), rows: [], summary: empty as unknown as Prisma.InputJsonValue },
+  });
+  const linked = await relinkOwnTransfers(user, batch.id);
+  if (linked === 0) await prisma.importBatch.delete({ where: { id: batch.id } });
+  return linked;
 }
 
 /** Отмена: черновик просто закрывается, применённый импорт удаляет свои операции, возвращает связанные переводы и баланс */
@@ -463,6 +557,14 @@ export async function cancelImport(user: ImportUser, batchId: string) {
       for (const link of summary.links ?? []) {
         if ("txId" in link) {
           await tx.transaction.updateMany({ where: { id: link.txId, userId: user.id }, data: link.before });
+        } else if ("restore" in link) {
+          const r = link.restore;
+          await tx.transaction.create({
+            data: {
+              id: r.id!, userId: user.id, accountId: r.accountId!, categoryId: r.categoryId, kind: r.kind!, amount: BigInt(r.amount!),
+              occurredAt: new Date(r.occurredAt!), note: r.note, source: r.source!, rawInput: r.rawInput, importBatchId: r.importBatchId, importKey: r.importKey,
+            },
+          }).catch(() => undefined);
         } else {
           await tx.account.updateMany({ where: { id: link.accountId, userId: user.id }, data: { openingBalance: { decrement: toDb(link.openingDelta) } } });
         }
@@ -549,7 +651,7 @@ export async function listImports(userId: string) {
   return batches.map(b => ({
     id: b.id,
     status: b.status as "APPLIED" | "CANCELLED",
-    bankTitle: BANKS[b.bank as BankCode]?.title ?? b.bank,
+    bankTitle: b.bank === "RELINK" ? "Связь переводов между картами" : BANKS[b.bank as BankCode]?.title ?? b.bank,
     periodFrom: b.periodFrom,
     periodTo: b.periodTo,
     imported: summaryOf(b).imported ?? 0,

@@ -6,7 +6,9 @@ import { escapeHtml } from "./text";
 // Что изменил импорт вне своих операций — чтобы отмена вернула всё как было
 export type ImportLink =
   | { txId: string; before: { kind: string; accountId: string; toAccountId: string | null; categoryId: string | null } }
-  | { accountId: string; openingDelta: number };
+  | { accountId: string; openingDelta: number }
+  // Поступление, удалённое при связывании перевода: сохраняется целиком, чтобы восстановить
+  | { restore: Record<string, string | null> };
 
 export type ImportSummary = {
   // Старые черновики Kaspi сохранялись без банка

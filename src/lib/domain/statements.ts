@@ -361,6 +361,40 @@ export function matchOwnTransfers(candidates: TransferCandidate[], counterparts:
   return result;
 }
 
+export type PairItem = { id: string; accountId: string; amount: number; day: DayKey };
+
+/**
+ * Пары уже внесённых операций «расход на одной своей карте — поступление на другой».
+ * `signal` оценивает пару: 2 — точно свои (владелец, «свой счёт», номер другой карты), 1 — вероятно
+ * («с карты другого банка»), 0 — не связывать. Сильный признак допускает ±3 дня, слабый — ±1.
+ */
+export function pairOwnTransfers<T extends PairItem>(items: T[], signal: (out: T, incoming: T) => number, dayDiff: (a: DayKey, b: DayKey) => number) {
+  const used = new Set<string>();
+  const pairs: { out: T; incoming: T }[] = [];
+  const outs = items.filter(i => i.amount < 0).sort((a, b) => a.day.localeCompare(b.day));
+  for (const out of outs) {
+    const options = items
+      .filter(i => i.amount === -out.amount && i.accountId !== out.accountId && !used.has(i.id))
+      .map(incoming => ({ incoming, strength: signal(out, incoming), distance: Math.abs(dayDiff(out.day, incoming.day)) }))
+      .filter(o => o.strength > 0 && o.distance <= (o.strength >= 2 ? 3 : 1))
+      .sort((a, b) => b.strength - a.strength || a.distance - b.distance);
+    const best = options[0];
+    if (!best) continue;
+    used.add(best.incoming.id);
+    pairs.push({ out, incoming: best.incoming });
+  }
+  return pairs;
+}
+
+/** Насколько описание операции указывает на перевод между своими картами (см. pairOwnTransfers) */
+export function ownTransferSignal(text: string, owner: ParsedStatement["owner"], otherAccountName: string) {
+  if (mentionsOwner(text, owner) || /сво(й|его|ю) (сч[её]т|карт)/i.test(text)) return 2;
+  const mask = text.match(/\*(\d{4})\b/)?.[1];
+  if (mask && otherAccountName.includes(mask)) return 2;
+  if (/(с|на) карт[уы] другого банка/i.test(text)) return 1;
+  return 0;
+}
+
 export function classifyStatementRow(statement: ParsedStatement, row: KaspiRow): StatementDecision {
   if (statement.bank === "KASPI_GOLD") return classifyKaspiRow(row);
 

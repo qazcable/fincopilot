@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { classifyStatementRow, cleanBankDetails, matchOwnTransfers, mentionsOwner, parseBankNumber, type ParsedStatement } from "./statements";
+import {
+  classifyStatementRow, cleanBankDetails, matchOwnTransfers, mentionsOwner, ownTransferSignal, pairOwnTransfers, parseBankNumber, type ParsedStatement,
+} from "./statements";
 import { daysBetween } from "./dates";
 
 const owner = { surname: "Иванов", name: "Арман" };
@@ -47,6 +49,31 @@ describe("classifyStatementRow", () => {
     const freedom = statement("FREEDOM");
     expect(classifyStatementRow(freedom, row("Пополнение", 2_100_000, "Пополнение. ФИО: Иванов Арман Сергеевич. Мобильный: . БИК: KCJBKZKX."))).toMatchObject({ action: "own", direction: "in" });
     expect(classifyStatementRow(freedom, row("Пополнение", 37_500_000, "Зачисление наличных … отправитель Иванов Арман"))).toEqual({ action: "own", direction: "in", note: "Внесение наличных" });
+  });
+});
+
+describe("pairOwnTransfers", () => {
+  const items = [
+    { id: "bcc-out", accountId: "bcc", amount: -30_000_000, day: "2026-07-10", text: "Перевод" },
+    { id: "kaspi-in", accountId: "kaspi", amount: 30_000_000, day: "2026-07-10", text: "С карты другого банка" },
+    { id: "kaspi-out", accountId: "kaspi", amount: -2_000_000, day: "2026-07-11", text: "На карту Банк ЦентрКредит*5214" },
+    { id: "bcc-in", accountId: "bcc", amount: 2_000_000, day: "2026-07-12", text: "Входящий перевод" },
+    // Перевод знакомому и совпавшая по сумме поступление — не свои
+    { id: "friend-out", accountId: "bcc", amount: -1_000_000, day: "2026-03-14", text: "Перевод" },
+    { id: "friend-in", accountId: "kaspi", amount: 1_000_000, day: "2026-03-14", text: "Елизавета А." },
+    // Слабый признак, но слишком далеко по дате
+    { id: "late-out", accountId: "bcc", amount: -500_000, day: "2026-05-01", text: "Перевод" },
+    { id: "late-in", accountId: "kaspi", amount: 500_000, day: "2026-05-03", text: "С карты другого банка" },
+  ];
+  const names: Record<string, string> = { bcc: "Банк ЦентрКредит *5214", kaspi: "Kaspi" };
+
+  it("links own transfers by strong and weak signals and skips strangers", () => {
+    const pairs = pairOwnTransfers(
+      items,
+      (out, incoming) => Math.max(ownTransferSignal(out.text, owner, names[incoming.accountId]), ownTransferSignal(incoming.text, owner, names[out.accountId])),
+      daysBetween
+    );
+    expect(pairs.map(p => `${p.out.id}>${p.incoming.id}`)).toEqual(["bcc-out>kaspi-in", "kaspi-out>bcc-in"]);
   });
 });
 
