@@ -4,10 +4,10 @@ import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
 import { hasAccess, isOwner, redeemInvite } from "./access";
 import { FEEDBACK_PROMPT, authorLine, feedbackRecipients, saveFeedback } from "./feedback";
-import { captureAudio, captureText, type CaptureResult } from "./capture";
+import { captureAudio, captureText, type CaptureResult, type CapturedItem } from "./capture";
 import { deleteTransaction } from "./ledger";
 import { markPaymentPaid } from "./payments";
-import { budgetLine, buildReceipt, escapeHtml } from "./receipt";
+import { budgetLine, buildMultiReceipt, buildReceipt, escapeHtml } from "./receipt";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { addDays, dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates";
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
@@ -97,9 +97,24 @@ async function replyWithCapture(ctx: Context, user: { id: string; timezone: stri
     await ctx.reply(text, { parse_mode: "HTML" });
     return;
   }
-  const receipt = await buildReceipt(user, result.transactionId, result.linkedPaymentTitle);
-  if (!receipt) return;
-  await ctx.reply(receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(result.transactionId) });
+  await sendReceipts(ctx.api, String(ctx.chat!.id), user, result.items);
+}
+
+/**
+ * Чеки операций: одна — обычный чек; несколько — чек на каждую (с кнопками категории и отмены) и итоговая сводка.
+ */
+export async function sendReceipts(api: Bot["api"], chatId: string, user: { id: string; timezone: string; cushion: bigint }, items: CapturedItem[]) {
+  if (items.length === 1) {
+    const receipt = await buildReceipt(user, items[0].transactionId, items[0].linkedPaymentTitle);
+    if (receipt) await api.sendMessage(chatId, receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(items[0].transactionId) });
+    return;
+  }
+  for (const item of items) {
+    const receipt = await buildReceipt(user, item.transactionId, item.linkedPaymentTitle, { budget: false });
+    if (receipt) await api.sendMessage(chatId, receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(item.transactionId) });
+  }
+  const summary = await buildMultiReceipt(user, items.map(i => i.transactionId));
+  await api.sendMessage(chatId, summary.html, { parse_mode: "HTML" });
 }
 
 async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>[0], question: string) {

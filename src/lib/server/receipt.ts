@@ -20,8 +20,35 @@ export async function budgetLine(user: ReceiptUser) {
   return `Можно сегодня: <b>${formatMoney(Math.max(0, budget.leftToday))}</b> · ${pluralDays(budget.daysLeft)} до ${formatDayKey(snapshot.horizon)}`;
 }
 
+/**
+ * Сводка для нескольких операций из одного сообщения: список с категориями, предупреждения лимитов и один раз — лимит на день.
+ * Кнопки правки категории и отмены — у отдельных чеков каждой операции.
+ */
+export async function buildMultiReceipt(user: ReceiptUser, transactionIds: string[]) {
+  const transactions = await prisma.transaction.findMany({
+    where: { id: { in: transactionIds }, userId: user.id },
+    include: { category: true },
+  });
+  const ordered = transactionIds.map(id => transactions.find(t => t.id === id)).filter(t => t !== undefined);
+  const expense = ordered.filter(t => t.kind === "EXPENSE").reduce((sum, t) => sum + fromDb(t.amount), 0);
+  const income = ordered.filter(t => t.kind === "INCOME").reduce((sum, t) => sum + fromDb(t.amount), 0);
+  const lines = [
+    `✅ <b>Записал операций: ${ordered.length}</b>`,
+    ...ordered.map(t => {
+      const amount = formatMoney(fromDb(t.amount) * (t.kind === "EXPENSE" ? -1 : 1), { sign: true });
+      const category = t.category ? `${t.category.emoji} ${t.category.name}` : "Без категории";
+      return `• <b>${amount}</b> · ${escapeHtml(category)}${t.note ? ` — ${escapeHtml(t.note)}` : ""}`;
+    }),
+    [expense > 0 ? `Расходы: <b>${formatMoney(expense)}</b>` : null, income > 0 ? `Поступления: <b>${formatMoney(income)}</b>` : null].filter(Boolean).join(" · "),
+    "",
+    await budgetLine(user),
+  ];
+  const html = lines.join("\n");
+  return { html, plain: stripHtml(html) };
+}
+
 /** Текст чека (HTML) и простой текст для Apple Shortcuts */
-export async function buildReceipt(user: ReceiptUser, transactionId: string, linkedPaymentTitle: string | null = null) {
+export async function buildReceipt(user: ReceiptUser, transactionId: string, linkedPaymentTitle: string | null = null, options: { budget?: boolean } = {}) {
   const tx = await prisma.transaction.findFirst({
     where: { id: transactionId, userId: user.id },
     include: { category: true, account: true },
@@ -39,8 +66,8 @@ export async function buildReceipt(user: ReceiptUser, transactionId: string, lin
     tx.note ? escapeHtml(tx.note) : null,
     linkedPaymentTitle ? `✅ Платёж «${escapeHtml(linkedPaymentTitle)}» отмечен оплаченным` : null,
     limitText,
-    "",
-    await budgetLine(user),
+    // В пачке операций лимит на день показывается один раз — в сводке
+    ...(options.budget === false ? [] : ["", await budgetLine(user)]),
   ].filter(line => line !== null);
 
   const html = lines.join("\n");

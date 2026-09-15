@@ -16,8 +16,11 @@ const AI_LIMIT = { count: 20, windowMs: 60_000 };
 
 type CaptureUser = { id: string; timezone: string };
 
+export type CapturedItem = { transactionId: string; linkedPaymentTitle: string | null };
+
+// Одно сообщение может содержать несколько операций — все записываются
 export type CaptureResult =
-  | { ok: true; transactionId: string; linkedPaymentTitle: string | null }
+  | { ok: true; items: CapturedItem[] }
   | { ok: false; reason: "not_understood" | "ai_unavailable" | "rate_limited" };
 
 type Parsed = { amount: number; kind: "EXPENSE" | "INCOME"; categoryId: string | null; note: string };
@@ -56,12 +59,23 @@ async function tryLinkPayment(user: CaptureUser, parsed: Parsed, source: TxSourc
   return { transactionId: transaction.id, title: match.obligation.title };
 }
 
-async function save(user: CaptureUser, parsed: Parsed, source: TxSource, rawInput: string): Promise<CaptureResult> {
+async function save(user: CaptureUser, parsed: Parsed, source: TxSource, rawInput: string): Promise<CapturedItem> {
   const linked = await tryLinkPayment(user, parsed, source, rawInput);
-  if (linked) return { ok: true, transactionId: linked.transactionId, linkedPaymentTitle: linked.title };
+  if (linked) return { transactionId: linked.transactionId, linkedPaymentTitle: linked.title };
 
   const transaction = await createTransaction(user.id, { ...parsed, source, rawInput });
-  return { ok: true, transactionId: transaction.id, linkedPaymentTitle: null };
+  return { transactionId: transaction.id, linkedPaymentTitle: null };
+}
+
+/** Записывает все операции из сообщения по порядку; выученные категории важнее выбора ИИ */
+async function saveAll(user: CaptureUser, parsed: Parsed[], source: TxSource, rawInput: string): Promise<CaptureResult> {
+  if (parsed.length === 0) return { ok: false, reason: "not_understood" };
+  const items: CapturedItem[] = [];
+  for (const operation of parsed) {
+    const categoryId = await learnedCategoryId(user.id, operation.kind, operation.note) ?? operation.categoryId;
+    items.push(await save(user, { ...operation, categoryId }, source, rawInput));
+  }
+  return { ok: true, items };
 }
 
 /** Категория, которую пользователь уже выбирал для такого описания (правка в боте или приложении) */
@@ -123,10 +137,7 @@ async function saveAuto(user: CaptureUser, input: { amount: number; kind: "EXPEN
   if (recent) return { ok: false, reason: "duplicate", transactionId: recent.id };
 
   const categoryId = await categorize(user.id, input.kind, input.note);
-  const linked = await tryLinkPayment(user, { ...input, categoryId }, source, rawInput);
-  if (linked) return { ok: true, transactionId: linked.transactionId, linkedPaymentTitle: linked.title };
-  const transaction = await createTransaction(user.id, { ...input, categoryId, source, rawInput });
-  return { ok: true, transactionId: transaction.id, linkedPaymentTitle: null };
+  return { ok: true, items: [await save(user, { ...input, categoryId }, source, rawInput)] };
 }
 
 async function accounts(userId: string) {
@@ -158,22 +169,21 @@ export async function captureText(user: CaptureUser, text: string, source: TxSou
   if (!input) return { ok: false, reason: "not_understood" };
 
   const quick = quickParse(input);
-  if (quick) {
+  // Одна сумма цифрами, но вторая названа словами («кофе 1200 и такси полторы тысячи») — это к ИИ
+  if (quick && !SPOKEN_AMOUNT.test(quick.note)) {
     const categoryId = await categorize(user.id, quick.kind, quick.note, quick.categoryKey);
-    return save(user, { amount: quick.amount, kind: quick.kind, categoryId, note: quick.note }, source, input);
+    return { ok: true, items: [await save(user, { amount: quick.amount, kind: quick.kind, categoryId, note: quick.note }, source, input)] };
   }
 
   if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
-  const parsed = await parseWithAi({ text: input }, await aiCategories(user.id));
-  if (!parsed) return { ok: false, reason: "not_understood" };
-  return save(user, { ...parsed, categoryId: await learnedCategoryId(user.id, parsed.kind, parsed.note) ?? parsed.categoryId }, source, input);
+  return saveAll(user, await parseWithAi({ text: input }, await aiCategories(user.id)), source, input);
 }
+
+const SPOKEN_AMOUNT = /(тысяч|полтор|сотн|двест|трист|пятьсот|шестьсот|семьсот|восемьсот|девятьсот)/i;
 
 export async function captureAudio(user: CaptureUser, audio: Buffer, mimeType: string, source: TxSource): Promise<CaptureResult> {
   if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
-  const parsed = await parseWithAi({ audio, mimeType }, await aiCategories(user.id));
-  if (!parsed) return { ok: false, reason: "not_understood" };
-  return save(user, { ...parsed, categoryId: await learnedCategoryId(user.id, parsed.kind, parsed.note) ?? parsed.categoryId }, source, "🎙 голосовое сообщение");
+  return saveAll(user, await parseWithAi({ audio, mimeType }, await aiCategories(user.id)), source, "🎙 голосовое сообщение");
 }

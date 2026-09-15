@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { InlineKeyboard } from "grammy";
 import { findUserByApiKey } from "@/lib/server/api-key";
 import { captureAudio, captureSms, captureText, captureWallet } from "@/lib/server/capture";
-import { buildReceipt } from "@/lib/server/receipt";
-import { errorMessage, getBot, isBotConfigured } from "@/lib/server/bot";
+import { buildMultiReceipt, buildReceipt } from "@/lib/server/receipt";
+import { errorMessage, getBot, isBotConfigured, sendReceipts } from "@/lib/server/bot";
 
 const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
 
@@ -66,17 +65,18 @@ export async function POST(req: NextRequest) {
     return text(message, status);
   }
 
-  const receipt = await buildReceipt(user, result.transactionId, result.linkedPaymentTitle);
+  // Уведомление на iPhone: одна операция — чек, несколько — сводка списком
+  const items = result.items;
+  const receipt = items.length === 1
+    ? await buildReceipt(user, items[0].transactionId, items[0].linkedPaymentTitle)
+    : await buildMultiReceipt(user, items.map(i => i.transactionId));
   if (!receipt) return text("Ошибка", 500);
 
-  // Дублируем чек в Telegram — там можно поменять категорию или отменить
+  // Дублируем чеки в Telegram — там можно поменять категорию или отменить
   if (isBotConfigured()) {
     try {
       const bot = await getBot();
-      await bot.api.sendMessage(String(user.telegramId), receipt.html, {
-        parse_mode: "HTML",
-        reply_markup: new InlineKeyboard().text("🏷 Категория", `k:${result.transactionId}`).text("↩️ Отменить", `u:${result.transactionId}`),
-      });
+      await sendReceipts(bot.api, String(user.telegramId), user, items);
     } catch (error) {
       console.error("Failed to send shortcut receipt:", errorMessage(error));
     }

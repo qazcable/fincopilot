@@ -21,34 +21,43 @@ export function isAiConfigured() {
 
 export type AiCategory = { id: string; name: string; kind: string };
 
-const aiResult = z.object({
+const aiOperation = z.object({
   amount: z.number(),
   kind: z.enum(["EXPENSE", "INCOME"]),
   categoryId: z.string(),
   note: z.string(),
   confidence: z.number().min(0).max(1),
 });
+const aiResult = z.object({ operations: z.array(aiOperation) });
 
 export type AiParsed = { amount: number; kind: "EXPENSE" | "INCOME"; categoryId: string | null; note: string };
 
 const MIN_CONFIDENCE = 0.55;
+// Защита от случайного «списка» из десятков чисел
+const MAX_OPERATIONS = 15;
 
-/** Разбор свободного текста или голосового в операцию. Суммы в ответе — в тенге, возвращаем тиыны. */
+/**
+ * Разбор свободного текста или голосового в операции: одно сообщение может содержать несколько трат
+ * («кофе 1200, такси 1500 и продукты 8 тысяч»). Суммы в ответе — в тенге, возвращаем тиыны.
+ */
 export async function parseWithAi(
   input: { text: string } | { audio: Buffer; mimeType: string },
   categories: AiCategory[]
-): Promise<AiParsed | null> {
+): Promise<AiParsed[]> {
   const ai = getClient();
-  if (!ai) return null;
+  if (!ai) return [];
 
   const categoryList = categories.map(c => `${c.id} — ${c.name} (${c.kind})`).join("\n");
   const instruction = `Ты разбираешь личные финансовые операции пользователя из Казахстана.
-Извлеки одну операцию. Валюта по умолчанию — тенге (₸). "2.5к", "две с половиной тысячи" = 2500.
+Извлеки ВСЕ операции из сообщения — их может быть несколько («потратил 1200 на кофе, 1500 на такси и 8 тысяч на продукты» — это три операции).
+Каждая названная сумма — отдельная операция со своей категорией. Не объединяй разные траты в одну и не пропускай ни одной.
+Если сказано «два кофе по 1200» — это одна операция на 2400. Итоговую сумму («всего вышло 10 700»), если она просто суммирует перечисленное, отдельной операцией не добавляй.
+Валюта по умолчанию — тенге (₸). "2.5к", "две с половиной тысячи" = 2500.
 kind: EXPENSE — трата, INCOME — поступление (зарплата, перевод мне, кэшбэк).
 categoryId: выбери ровно один id из списка, подходящий по kind:
 ${categoryList}
 note: короткое описание с заглавной буквы, без суммы (например "Такси до офиса").
-confidence: 0..1. Если сумма не названа или речь не о деньгах — confidence ниже 0.5.`;
+confidence: 0..1 для каждой операции. Если сумма не названа или речь не о деньгах — операций нет (пустой список).`;
 
   const contents = "text" in input
     ? [{ role: "user", parts: [{ text: input.text }] }]
@@ -64,13 +73,22 @@ confidence: 0..1. Если сумма не названа или речь не �
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          amount: { type: Type.NUMBER },
-          kind: { type: Type.STRING, enum: ["EXPENSE", "INCOME"] },
-          categoryId: { type: Type.STRING, enum: categories.map(c => c.id) },
-          note: { type: Type.STRING },
-          confidence: { type: Type.NUMBER },
+          operations: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                amount: { type: Type.NUMBER },
+                kind: { type: Type.STRING, enum: ["EXPENSE", "INCOME"] },
+                categoryId: { type: Type.STRING, enum: categories.map(c => c.id) },
+                note: { type: Type.STRING },
+                confidence: { type: Type.NUMBER },
+              },
+              required: ["amount", "kind", "categoryId", "note", "confidence"],
+            },
+          },
         },
-        required: ["amount", "kind", "categoryId", "note", "confidence"],
+        required: ["operations"],
       },
     },
   });
@@ -79,14 +97,15 @@ confidence: 0..1. Если сумма не названа или речь не �
   try {
     parsed = aiResult.parse(JSON.parse(response.text ?? ""));
   } catch {
-    return null;
+    return [];
   }
 
-  const amount = Math.round(parsed.amount * MINOR_PER_UNIT);
-  if (parsed.confidence < MIN_CONFIDENCE || !Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT_MINOR) return null;
-
-  const category = categories.find(c => c.id === parsed.categoryId && c.kind === parsed.kind);
-  return { amount, kind: parsed.kind, categoryId: category?.id ?? null, note: parsed.note.trim().slice(0, 200) };
+  return parsed.operations.slice(0, MAX_OPERATIONS).flatMap(op => {
+    const amount = Math.round(op.amount * MINOR_PER_UNIT);
+    if (op.confidence < MIN_CONFIDENCE || !Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT_MINOR) return [];
+    const category = categories.find(c => c.id === op.categoryId && c.kind === op.kind);
+    return [{ amount, kind: op.kind, categoryId: category?.id ?? null, note: op.note.trim().slice(0, 200) }];
+  });
 }
 
 const ADVISOR_INSTRUCTION = `Ты — личный финансовый советник в приложении FinCopilot. Пользователь живёт в Казахстане, валюта — тенге (₸).
