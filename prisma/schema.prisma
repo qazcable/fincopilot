@@ -46,6 +46,7 @@ model User {
   limitAlerts      CategoryLimitAlert[]
   imports          ImportBatch[]
   merchants        MerchantCategory[]
+  goals            Goal[]
 }
 
 model Account {
@@ -62,6 +63,27 @@ model Account {
   archivedAt     DateTime?
   createdAt      DateTime      @default(now())
   transactions   Transaction[]
+  incoming       Transaction[] @relation("IncomingTransfers")
+  goals          Goal[]
+
+  @@index([userId])
+}
+
+// Цель накоплений. Прогресс — баланс привязанного счёта «Накопления», распределённый между целями по порядку
+model Goal {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId    String
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title        String
+  emoji        String    @default("🎯")
+  targetAmount BigInt
+  // Локальная дата YYYY-MM-DD; без даты — копим без срока
+  targetDate   String?
+  sortOrder    Int       @default(0)
+  achievedAt   DateTime?
+  createdAt    DateTime  @default(now())
 
   @@index([userId])
 }
@@ -97,8 +119,10 @@ model Transaction {
   account            Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
   categoryId         String?
   category           Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  // EXPENSE | INCOME
+  // EXPENSE | INCOME | TRANSFER (перевод между своими счетами: accountId → toAccountId)
   kind               String
+  toAccountId        String?
+  toAccount          Account?          @relation("IncomingTransfers", fields: [toAccountId], references: [id], onDelete: Cascade)
   amount             BigInt
   occurredAt         DateTime          @default(now())
   note               String?

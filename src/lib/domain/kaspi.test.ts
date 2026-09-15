@@ -85,9 +85,10 @@ describe("classifyKaspiRow", () => {
     expect(classifyKaspiRow(r("Разное", -149_000, "Оплата за годовое обслуживание"))).toMatchObject({ kind: "EXPENSE", categoryKey: "other" });
   });
 
-  it("skips own transfers but keeps Kaspi loan payments as expenses", () => {
-    expect(classifyKaspiRow(r("Перевод на свой счет", -500_000, "На Kaspi Депозит"))).toEqual({ action: "skip", reason: "own_transfer" });
-    expect(classifyKaspiRow(r("Поступление со своего счета", 10_000, "С Kaspi Депозита"))).toEqual({ action: "skip", reason: "own_transfer" });
+  it("turns deposit movements into transfers, keeps Kaspi loan payments as expenses", () => {
+    expect(classifyKaspiRow(r("Перевод на свой счет", -500_000, "На Kaspi Депозит"))).toEqual({ action: "transfer", direction: "out", note: "На Kaspi Депозит" });
+    expect(classifyKaspiRow(r("Поступление со своего счета", 10_000, "С Kaspi Депозита"))).toEqual({ action: "transfer", direction: "in", note: "С Kaspi Депозита" });
+    expect(classifyKaspiRow(r("Перевод на свой счет", -500_000, "На карту Kaspi Red"))).toEqual({ action: "skip", reason: "own_transfer" });
     expect(classifyKaspiRow(r("Перевод на свой счет", -23_788_800, "Оплата Kaspi Кредита"))).toMatchObject({ kind: "EXPENSE", categoryKey: "debts" });
   });
 });

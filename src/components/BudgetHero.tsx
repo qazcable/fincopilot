@@ -56,7 +56,7 @@ export function BudgetHero({
         {shortfall ? (
           <>До {formatDayKey(horizon, today).toLowerCase()} не хватает <Money value={-budget.free} className="font-semibold text-negative" /> на обязательные платежи</>
         ) : (
-          <>Лимит на {pluralDays(budget.daysLeft)} — до {hasIncomeSchedule ? "зарплаты " : ""}{formatDayKey(horizon, today).toLowerCase()}. Платежи и подушка уже вычтены.</>
+          <>Лимит на {pluralDays(budget.daysLeft)} — до {hasIncomeSchedule ? "зарплаты " : ""}{formatDayKey(horizon, today).toLowerCase()}. {budget.reservedForGoals > 0 ? "Платежи, цели и подушка" : "Платежи и подушка"} уже вычтены.</>
         )}
         {!hasIncomeSchedule && (
           <Link href="/settings#incomes" className="mt-2 flex items-center font-medium text-accent">

@@ -14,7 +14,7 @@ export type AccountDto = { id: string; name: string; kind: string; balance: numb
 
 export type TransactionDto = {
   id: string;
-  kind: "EXPENSE" | "INCOME";
+  kind: "EXPENSE" | "INCOME" | "TRANSFER";
   amount: number;
   note: string | null;
   source: string;
@@ -23,6 +23,9 @@ export type TransactionDto = {
   localDateTime: string;
   accountId: string;
   accountName: string;
+  // Только у переводов
+  toAccountId: string | null;
+  toAccountName: string | null;
   isPayment: boolean;
   category: CategoryDto | null;
 };
@@ -32,7 +35,7 @@ type TxWithRelations = Awaited<ReturnType<typeof loadTransactions>>[number];
 function loadTransactions(userId: string, where: object, take?: number) {
   return prisma.transaction.findMany({
     where: { userId, ...where },
-    include: { category: true, account: { select: { name: true } } },
+    include: { category: true, account: { select: { name: true } }, toAccount: { select: { name: true } } },
     orderBy: { occurredAt: "desc" },
     take,
   });
@@ -51,6 +54,8 @@ function toTransactionDto(tx: TxWithRelations, timezone: string): TransactionDto
     localDateTime: local,
     accountId: tx.accountId,
     accountName: tx.account.name,
+    toAccountId: tx.toAccountId,
+    toAccountName: tx.toAccount?.name ?? null,
     isPayment: tx.scheduledPaymentId !== null,
     category: tx.category && {
       id: tx.category.id, name: tx.category.name, emoji: tx.category.emoji, color: tx.category.color, kind: tx.category.kind,

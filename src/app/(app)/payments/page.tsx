@@ -4,6 +4,7 @@ import { ChevronRight, Plus } from "lucide-react";
 import { requireUser } from "@/lib/server/auth";
 import { getPaymentsData } from "@/lib/server/queries";
 import { PaymentRow } from "@/components/PaymentRow";
+import { DebtStrategy } from "@/components/PayoffCalculator";
 import { Card, CategoryIcon, EmptyState, Money, PageHeader, SectionHeader } from "@/components/ui/primitives";
 import { formatDayKey, plural } from "@/lib/domain/dates";
 import { OBLIGATION_KINDS, type ObligationKind } from "@/lib/domain/constants";
@@ -19,6 +20,9 @@ export default async function PaymentsPage() {
   const active = data.obligations.filter(o => !o.completed);
   const completed = data.obligations.filter(o => o.completed);
   const totalDebt = active.reduce((sum, o) => sum + (o.principalLeft ?? 0), 0);
+  const debts = active
+    .filter(o => o.principalLeft !== null && o.principalLeft > 0)
+    .map(o => ({ id: o.id, title: o.title, balance: o.principalLeft!, ratePercent: o.interestRate ?? 0, minPayment: o.monthlyAmount }));
 
   return (
     <main className="safe-top">
@@ -72,6 +76,8 @@ export default async function PaymentsPage() {
                 </Card>
               </section>
             )}
+
+            {debts.length >= 2 && <DebtStrategy debts={debts} />}
 
             <section>
               <SectionHeader title="Обязательства" />

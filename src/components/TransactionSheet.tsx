@@ -11,9 +11,11 @@ import type { AccountDto, CategoryDto, TransactionDto } from "@/lib/server/queri
 import { haptic } from "@/lib/client/telegram";
 import { instantToLocalInput } from "@/lib/domain/dates";
 
-type SheetState = ({ mode: "create"; kind: "EXPENSE" | "INCOME" } | { mode: "edit"; tx: TransactionDto }) & { now: string } | null;
+type Kind = TransactionDto["kind"];
 
-const TransactionSheetContext = createContext<{ openCreate: (kind?: "EXPENSE" | "INCOME") => void; openEdit: (tx: TransactionDto) => void } | null>(null);
+type SheetState = ({ mode: "create"; kind: Kind } | { mode: "edit"; tx: TransactionDto }) & { now: string } | null;
+
+const TransactionSheetContext = createContext<{ openCreate: (kind?: Kind) => void; openEdit: (tx: TransactionDto) => void } | null>(null);
 
 export function useTransactionSheet() {
   const context = useContext(TransactionSheetContext);
@@ -30,7 +32,7 @@ export function TransactionSheetProvider({
   const [state, setState] = useState<SheetState>(null);
   const [formKey, setFormKey] = useState(0);
 
-  const openCreate = useCallback((kind: "EXPENSE" | "INCOME" = "EXPENSE") => {
+  const openCreate = useCallback((kind: Kind = "EXPENSE") => {
     haptic.tap();
     setFormKey(k => k + 1);
     setState({ mode: "create", kind, now: instantToLocalInput(new Date(), timezone) });
@@ -78,10 +80,13 @@ function TransactionForm({
   const editing = state.mode === "edit" ? state.tx : null;
   const defaultAccount = accounts.find(a => a.isDefault) ?? accounts[0];
 
-  const [kind, setKind] = useState<"EXPENSE" | "INCOME">(editing?.kind ?? (state.mode === "create" ? state.kind : "EXPENSE"));
+  const [kind, setKind] = useState<Kind>(editing?.kind ?? (state.mode === "create" ? state.kind : "EXPENSE"));
   const [amount, setAmount] = useState(editing ? minorToAmountInput(editing.amount) : "");
   const [categoryId, setCategoryId] = useState<string | null>(editing?.category?.id ?? null);
   const [accountId, setAccountId] = useState(editing?.accountId ?? defaultAccount?.id ?? "");
+  const [toAccountId, setToAccountId] = useState<string | null>(
+    editing?.toAccountId ?? accounts.find(a => a.id !== (editing?.accountId ?? defaultAccount?.id))?.id ?? null
+  );
   const [note, setNote] = useState(editing?.note ?? "");
   const [dateTime, setDateTime] = useState(editing?.localDateTime ?? nowLocalDateTime);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +97,21 @@ function TransactionForm({
   const visibleCategories = categories.filter(c => c.kind === kind);
   const minor = inputToMinor(amount);
 
-  function changeKind(next: "EXPENSE" | "INCOME") {
+  const canTransfer = accounts.length > 1;
+  const kindOptions: { value: Kind; label: string }[] = [
+    { value: "EXPENSE", label: "Расход" },
+    { value: "INCOME", label: "Доход" },
+    ...(canTransfer || kind === "TRANSFER" ? [{ value: "TRANSFER" as const, label: "Перевод" }] : []),
+  ];
+
+  function changeKind(next: Kind) {
     setKind(next);
     setCategoryId(null);
+  }
+
+  function chooseFrom(id: string) {
+    setAccountId(id);
+    if (toAccountId === id) setToAccountId(accounts.find(a => a.id !== id)?.id ?? null);
   }
 
   function submit() {
@@ -109,8 +126,9 @@ function TransactionForm({
         id: editing?.id,
         kind,
         amount: minor,
-        categoryId,
+        categoryId: kind === "TRANSFER" ? null : categoryId,
         accountId,
+        toAccountId: kind === "TRANSFER" ? toAccountId : null,
         note,
         localDateTime: dateTime,
       });
@@ -140,11 +158,7 @@ function TransactionForm({
   return (
     <div className="space-y-4">
       {!lockedAmount && (
-        <Segmented
-          value={kind}
-          onChange={changeKind}
-          options={[{ value: "EXPENSE", label: "Расход" }, { value: "INCOME", label: "Доход" }]}
-        />
+        <Segmented value={kind} onChange={changeKind} options={kindOptions} />
       )}
 
       <AmountDisplay value={amount} tone={kind} />
@@ -152,6 +166,12 @@ function TransactionForm({
         <p className="-mt-2 text-center text-[13px] text-muted">Оплата по графику — сумму меняйте в платеже</p>
       )}
 
+      {kind === "TRANSFER" ? (
+        <div className="space-y-2">
+          <AccountChips label="Откуда" accounts={accounts} value={accountId} onChange={chooseFrom} />
+          <AccountChips label="Куда" accounts={accounts.filter(a => a.id !== accountId)} value={toAccountId} onChange={setToAccountId} />
+        </div>
+      ) : (
       <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5 pb-1">
         {visibleCategories.map(category => {
           const active = categoryId === category.id;
@@ -172,6 +192,7 @@ function TransactionForm({
           );
         })}
       </div>
+      )}
 
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <input
@@ -195,7 +216,7 @@ function TransactionForm({
         </label>
       </div>
 
-      {accounts.length > 1 && (
+      {accounts.length > 1 && kind !== "TRANSFER" && (
         <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
           {accounts.map(account => (
             <button
@@ -224,9 +245,30 @@ function TransactionForm({
           </Button>
         )}
         <Button size="lg" onClick={submit} loading={saving} disabled={!minor}>
-          {editing ? "Сохранить" : kind === "EXPENSE" ? "Добавить расход" : "Добавить доход"}
+          {editing ? "Сохранить" : kind === "EXPENSE" ? "Добавить расход" : kind === "INCOME" ? "Добавить доход" : "Перевести"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function AccountChips({ label, accounts, value, onChange }: { label: string; accounts: AccountDto[]; value: string | null; onChange: (id: string) => void }) {
+  return (
+    <div className="no-scrollbar -mx-5 flex items-center gap-2 overflow-x-auto px-5">
+      <span className="w-14 shrink-0 text-[13px] text-muted">{label}</span>
+      {accounts.map(account => (
+        <button
+          key={account.id}
+          type="button"
+          onClick={() => { haptic.select(); onChange(account.id); }}
+          className={clsx(
+            "pressable shrink-0 rounded-full px-3.5 py-2 text-[13px] font-medium",
+            value === account.id ? "bg-accent-soft text-accent" : "bg-surface-2 text-muted"
+          )}
+        >
+          {account.name}
+        </button>
+      ))}
     </div>
   );
 }

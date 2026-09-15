@@ -20,6 +20,28 @@ export function TransactionRow({ tx }: { tx: TransactionDto }) {
   const source = SOURCE_ICON[tx.source];
   const SourceIcon = source?.icon;
 
+  if (tx.kind === "TRANSFER") {
+    return (
+      <button
+        type="button"
+        onClick={() => openEdit(tx)}
+        className="pressable flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left active:bg-surface-2"
+      >
+        <CategoryIcon emoji="🔁" color="#6366F1" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium">{tx.accountName} → {tx.toAccountName}</span>
+          <span className="mt-0.5 flex items-center gap-1 text-[13px] text-muted">
+            <span className="truncate">{tx.note || "Перевод между счетами"}</span>
+            <span aria-hidden>·</span>
+            <span className="tabular">{tx.time}</span>
+            {SourceIcon && <SourceIcon className="ml-0.5 size-3.5 shrink-0" aria-label={source.label} />}
+          </span>
+        </span>
+        <Money value={tx.amount} className="text-[15px] font-semibold text-muted" />
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"

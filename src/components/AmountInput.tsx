@@ -29,7 +29,7 @@ function pressKey(value: string, key: string) {
   return inputToMinor(next) > MAX_AMOUNT_MINOR || (fraction === undefined && whole.length >= 12) ? value : next;
 }
 
-export function AmountDisplay({ value, tone }: { value: string; tone: "EXPENSE" | "INCOME" }) {
+export function AmountDisplay({ value, tone }: { value: string; tone: "EXPENSE" | "INCOME" | "TRANSFER" }) {
   const minor = inputToMinor(value);
   const [whole, fraction] = value.split(",");
   const wholeText = formatMoney(Number(whole || "0") * 100, { currency: false });

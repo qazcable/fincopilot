@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/server/auth";
 import { getObligation } from "@/lib/server/queries";
 import { BackButton } from "@/components/TelegramBackButton";
 import { ObligationForm } from "@/components/ObligationForm";
+import { PayoffCalculator } from "@/components/PayoffCalculator";
 import { Card, Money, SectionHeader } from "@/components/ui/primitives";
 import { formatDayKey } from "@/lib/domain/dates";
 import type { ObligationKind } from "@/lib/domain/constants";
@@ -23,6 +24,12 @@ export default async function ObligationPage({ params }: { params: Promise<{ id:
     <main className="safe-top px-4 pt-4">
       <BackButton href="/payments" label="Платежи" />
       <h1 className="mb-5 mt-3 truncate px-1 text-[28px] font-bold tracking-tight">{obligation.title}</h1>
+
+      {obligation.principalLeft !== null && obligation.principalLeft > 0 && !obligation.completed && (
+        <div className="mb-6">
+          <PayoffCalculator balance={obligation.principalLeft} ratePercent={obligation.interestRate ?? 0} monthlyPayment={obligation.monthlyAmount} />
+        </div>
+      )}
 
       <ObligationForm initial={{ ...obligation, kind: obligation.kind as ObligationKind }} />
 

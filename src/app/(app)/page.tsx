@@ -6,6 +6,7 @@ import { BudgetHero } from "@/components/BudgetHero";
 import { LimitWarnings } from "@/components/LimitWarnings";
 import { PaymentRow } from "@/components/PaymentRow";
 import { TransactionList } from "@/components/TransactionList";
+import { GoalProgress } from "@/components/GoalsBoard";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
 import { Card, EmptyState, Money, SectionHeader } from "@/components/ui/primitives";
 import { capitalize, formatDayKey, plural, weekdayOf } from "@/lib/domain/dates";
@@ -60,12 +61,33 @@ export default async function HomePage() {
           </Link>
           <Link href="/payments" className="pressable block">
             <Card className="h-full p-4">
-              <p className="text-[13px] font-medium text-muted">На платежи</p>
+              <p className="text-[13px] font-medium text-muted">{data.budget.reservedForGoals > 0 ? "Платежи и цели" : "На платежи"}</p>
               <Money value={data.budget.reserved} className="mt-1 block text-[20px] font-bold tracking-tight" />
               <p className="mt-0.5 text-[12px] text-faint">до {formatDayKey(data.horizon)}</p>
             </Card>
           </Link>
         </div>
+
+        <section>
+          <SectionHeader title="Цели" href="/goals" action={data.goals.length > 0 ? "Все" : "Создать"} />
+          {data.goals.length > 0 ? (
+            <Link href="/goals" className="pressable block">
+              <Card className="space-y-4 p-4">
+                {data.goals.slice(0, 3).map(goal => <GoalProgress key={goal.id} goal={goal} today={data.today} compact />)}
+              </Card>
+            </Link>
+          ) : (
+            <Link href="/goals" className="pressable block">
+              <Card className="flex items-center gap-3 p-4">
+                <span className="flex size-11 items-center justify-center rounded-2xl bg-accent-soft text-xl" aria-hidden>🎯</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-semibold">Копите на депозит?</span>
+                  <span className="block text-[13px] text-muted">Поставьте цель — посчитаю, сколько откладывать</span>
+                </span>
+              </Card>
+            </Link>
+          )}
+        </section>
 
         <section>
           <SectionHeader title="Ближайшие платежи" href="/payments" />

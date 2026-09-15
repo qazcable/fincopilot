@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { ensureDefaultCategories } from "./auth";
-import { getDefaultAccount } from "./ledger";
+import { accountMovementUntil, getDefaultAccount } from "./ledger";
 import { extractPdfItems } from "./pdf";
 import { categorizeMerchants } from "./ai";
 import {
@@ -35,6 +35,7 @@ export async function createKaspiDraft(user: ImportUser, pdf: Uint8Array): Promi
   if (statement.rows.length === 0) return { ok: false, reason: "empty" };
 
   const account = await getDefaultAccount(user.id);
+  const savings = await findSavingsAccount(user.id, account.id);
   const keys = importKeys(statement.rows);
   const decisions = statement.rows.map(classifyKaspiRow);
   const days = statement.rows.map(r => r.date).sort();
@@ -70,16 +71,20 @@ export async function createKaspiDraft(user: ImportUser, pdf: Uint8Array): Promi
   }));
 
   const importable = rows.filter(r => r.decision.action === "import" && r.duplicate === null);
+  // Переводы с депозитом учитываем, только если у пользователя заведён счёт накоплений
+  const transfers = savings ? rows.filter(r => r.decision.action === "transfer" && r.duplicate === null) : [];
   const summary: ImportSummary = {
     cardMask: statement.cardMask,
     periodFrom: statement.periodFrom,
     periodTo: statement.periodTo,
     closingBalance: statement.closingBalance,
     total: rows.length,
-    toImport: importable.length,
+    toImport: importable.length + transfers.length,
     alreadyImported: rows.filter(r => r.duplicate === "imported").length,
     manualDuplicates: rows.filter(r => r.duplicate === "manual").length,
-    skippedOwn: rows.filter(r => r.decision.action === "skip").length,
+    skippedOwn: rows.filter(r => r.decision.action === "skip" || (r.decision.action === "transfer" && !savings)).length,
+    transfers: transfers.length,
+    savingsAccountName: savings?.name ?? null,
     income: importable.filter(r => r.amount > 0).reduce((s, r) => s + r.amount, 0),
     expense: importable.filter(r => r.amount < 0).reduce((s, r) => s - r.amount, 0),
     needAi: importable.filter(r => r.decision.action === "import" && r.decision.needsAi).length,
@@ -100,6 +105,15 @@ export async function createKaspiDraft(user: ImportUser, pdf: Uint8Array): Promi
     },
   });
   return { ok: true, batchId: batch.id, summary };
+}
+
+/** Счёт для переводов «На Kaspi Депозит»: сначала накопительный с «депозит» в названии, иначе первый накопительный */
+async function findSavingsAccount(userId: string, excludeId: string) {
+  const accounts = await prisma.account.findMany({
+    where: { userId, kind: "SAVINGS", archivedAt: null, id: { not: excludeId } },
+    orderBy: { createdAt: "asc" },
+  });
+  return accounts.find(a => /депозит|deposit/i.test(a.name)) ?? accounts[0] ?? null;
 }
 
 export type ApplyResult =
@@ -123,8 +137,10 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
 
   try {
     const batch = await prisma.importBatch.findUniqueOrThrow({ where: { id: batchId } });
-    const rows = (batch.rows as unknown as StoredRow[]).filter(r => r.decision.action === "import" && r.duplicate === null);
+    const newRows = (batch.rows as unknown as StoredRow[]).filter(r => r.duplicate === null);
+    const rows = newRows.filter(r => r.decision.action === "import");
     const summary = batch.summary as unknown as ImportSummary;
+    const savings = summary.transfers ? await findSavingsAccount(user.id, batch.accountId) : null;
 
     await ensureDefaultCategories(user.id);
     const [categories, learned] = await Promise.all([
@@ -177,6 +193,28 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
       };
     });
 
+    // Переводы между картой и депозитом — не расход и не доход, а движение между своими счетами
+    if (savings) {
+      for (const row of newRows) {
+        if (row.decision.action !== "transfer") continue;
+        const out = row.decision.direction === "out";
+        data.push({
+          userId: user.id,
+          kind: "TRANSFER",
+          accountId: out ? batch.accountId : savings.id,
+          toAccountId: out ? savings.id : batch.accountId,
+          categoryId: null,
+          amount: toDb(Math.abs(row.amount)),
+          occurredAt: localDateTimeToInstant(`${row.date}T12:00`, user.timezone)!,
+          note: row.decision.note.slice(0, 200),
+          source: "IMPORT",
+          rawInput: row.operation.slice(0, 500),
+          importBatchId: batch.id,
+          importKey: row.key,
+        });
+      }
+    }
+
     const imported = await prisma.$transaction(async tx => {
       let created = 0;
       for (let i = 0; i < data.length; i += CREATE_CHUNK) {
@@ -188,14 +226,7 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
       let previousOpeningBalance: bigint | null = null;
       if (batch.closingBalance !== null && batch.periodTo) {
         const until = startOfDayInstant(addDays(batch.periodTo, 1), user.timezone);
-        const sums = await tx.transaction.groupBy({
-          by: ["kind"],
-          where: { accountId: account.id, occurredAt: { lt: until } },
-          _sum: { amount: true },
-        });
-        const income = fromDb(sums.find(s => s.kind === "INCOME")?._sum.amount);
-        const expense = fromDb(sums.find(s => s.kind === "EXPENSE")?._sum.amount);
-        const balanceAtEnd = fromDb(account.openingBalance) + income - expense;
+        const balanceAtEnd = fromDb(account.openingBalance) + await accountMovementUntil(tx, account.id, until);
         previousOpeningBalance = account.openingBalance;
         await tx.account.update({
           where: { id: account.id },

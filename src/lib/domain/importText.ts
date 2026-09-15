@@ -1,6 +1,7 @@
 // Тексты импорта выписки для бота
 import { formatDayKey } from "./dates";
 import { formatMoney } from "./money";
+import { escapeHtml } from "./text";
 
 export type ImportSummary = {
   cardMask: string | null;
@@ -12,6 +13,9 @@ export type ImportSummary = {
   alreadyImported: number;
   manualDuplicates: number;
   skippedOwn: number;
+  // Переводы между картой и счётом накоплений (входят в toImport)
+  transfers?: number;
+  savingsAccountName?: string | null;
   income: number;
   expense: number;
   needAi: number;
@@ -38,7 +42,10 @@ export function formatImportDraft(summary: ImportSummary) {
   }
   if (summary.alreadyImported > 0) lines.push(`↩️ Уже импортированы раньше: ${summary.alreadyImported}`);
   if (summary.manualDuplicates > 0) lines.push(`✍️ Уже внесены вручную: ${summary.manualDuplicates}`);
-  if (summary.skippedOwn > 0) lines.push(`🔁 Переводы между своими счетами пропущу: ${summary.skippedOwn}`);
+  if (summary.transfers) {
+    lines.push(`🔁 Переводы на «${escapeHtml(summary.savingsAccountName ?? "Накопления")}» и обратно: ${summary.transfers} — не расходы`);
+  }
+  if (summary.skippedOwn > 0) lines.push(`⏭ Переводы между своими счетами пропущу: ${summary.skippedOwn}`);
   if (summary.closingBalance !== null && summary.toImport > 0) {
     lines.push("", `Баланс карты станет как в выписке: <b>${formatMoney(summary.closingBalance)}</b>`);
   }

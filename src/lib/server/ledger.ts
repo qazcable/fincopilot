@@ -6,16 +6,20 @@ import { FALLBACK_CATEGORY_KEY, type TxKind, type TxSource } from "@/lib/domain/
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
-/** Баланс = начальный остаток + доходы − расходы. Поле баланса не хранится, чтобы не расходилось с историей. */
+/**
+ * Баланс = начальный остаток + доходы − расходы − переводы со счёта + переводы на счёт.
+ * Поле баланса не хранится, чтобы не расходилось с историей.
+ */
 export async function getAccountBalances(userId: string, db: Db = prisma) {
-  const [accounts, sums] = await Promise.all([
+  const [accounts, sums, incoming] = await Promise.all([
     db.account.findMany({ where: { userId, archivedAt: null }, orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] }),
     db.transaction.groupBy({ by: ["accountId", "kind"], where: { userId }, _sum: { amount: true } }),
+    db.transaction.groupBy({ by: ["toAccountId"], where: { userId, kind: "TRANSFER" }, _sum: { amount: true } }),
   ]);
 
   return accounts.map(account => {
-    const income = fromDb(sums.find(s => s.accountId === account.id && s.kind === "INCOME")?._sum.amount);
-    const expense = fromDb(sums.find(s => s.accountId === account.id && s.kind === "EXPENSE")?._sum.amount);
+    const sum = (kind: string) => fromDb(sums.find(s => s.accountId === account.id && s.kind === kind)?._sum.amount);
+    const transfersIn = fromDb(incoming.find(s => s.toAccountId === account.id)?._sum.amount);
     return {
       id: account.id,
       name: account.name,
@@ -23,9 +27,19 @@ export async function getAccountBalances(userId: string, db: Db = prisma) {
       inBudget: account.inBudget,
       isDefault: account.isDefault,
       openingBalance: fromDb(account.openingBalance),
-      balance: fromDb(account.openingBalance) + income - expense,
+      balance: fromDb(account.openingBalance) + sum("INCOME") - sum("EXPENSE") - sum("TRANSFER") + transfersIn,
     };
   });
+}
+
+/** Движение по счёту (без начального остатка) за операции до момента `until` */
+export async function accountMovementUntil(db: Db, accountId: string, until: Date) {
+  const [sums, incoming] = await Promise.all([
+    db.transaction.groupBy({ by: ["kind"], where: { accountId, occurredAt: { lt: until } }, _sum: { amount: true } }),
+    db.transaction.aggregate({ where: { toAccountId: accountId, kind: "TRANSFER", occurredAt: { lt: until } }, _sum: { amount: true } }),
+  ]);
+  const sum = (kind: string) => fromDb(sums.find(s => s.kind === kind)?._sum.amount);
+  return sum("INCOME") - sum("EXPENSE") - sum("TRANSFER") + fromDb(incoming._sum.amount);
 }
 
 export async function getDefaultAccount(userId: string, db: Db = prisma) {
@@ -82,6 +96,34 @@ export async function createTransaction(userId: string, input: NewTransaction, d
       scheduledPaymentId: input.scheduledPaymentId ?? null,
     },
     include: { category: true },
+  });
+}
+
+export type NewTransfer = {
+  fromAccountId: string;
+  toAccountId: string;
+  amount: number;
+  note?: string | null;
+  occurredAt?: Date;
+  source: TxSource;
+};
+
+/** Перевод между своими счетами: не расход и не доход, в статистику и лимиты не попадает */
+export async function createTransfer(userId: string, input: NewTransfer, db: Db = prisma) {
+  if (input.fromAccountId === input.toAccountId) throw new Error("Same account");
+  const accounts = await db.account.findMany({ where: { userId, id: { in: [input.fromAccountId, input.toAccountId] } } });
+  if (accounts.length !== 2) throw new Error("Account not found");
+  return db.transaction.create({
+    data: {
+      userId,
+      kind: "TRANSFER",
+      accountId: input.fromAccountId,
+      toAccountId: input.toAccountId,
+      amount: toDb(input.amount),
+      note: input.note?.trim().slice(0, 200) || null,
+      occurredAt: input.occurredAt ?? new Date(),
+      source: input.source,
+    },
   });
 }
 

@@ -133,6 +133,8 @@ export function parseKaspiStatement(pages: TextItem[][]): KaspiStatement {
 
 export type KaspiDecision =
   | { action: "import"; kind: TxKind; categoryKey: string | null; note: string; needsAi: boolean }
+  // Перевод между своими счетами: out — со счёта выписки, in — на него. Импортируется, если есть счёт накоплений
+  | { action: "transfer"; direction: "out" | "in"; note: string }
   | { action: "skip"; reason: "own_transfer" };
 
 function cleanDetails(details: string) {
@@ -150,6 +152,9 @@ export function classifyKaspiRow(row: KaspiRow): KaspiDecision {
   if (op.includes("свой счет") || op.includes("свой счёт") || op.includes("своего счета") || op.includes("своего счёта")) {
     if (/кредит/i.test(details)) {
       return { action: "import", kind: "EXPENSE", categoryKey: "debts", note: details, needsAi: false };
+    }
+    if (/депозит/i.test(details)) {
+      return { action: "transfer", direction: income ? "in" : "out", note: details };
     }
     return { action: "skip", reason: "own_transfer" };
   }

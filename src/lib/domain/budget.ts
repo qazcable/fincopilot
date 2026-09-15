@@ -25,10 +25,14 @@ export type BudgetInput = {
   pendingPayments: { dueOn: DayKey; amount: number }[];
   // Расходы, совершённые сегодня (уже вычтены из баланса)
   spentToday: number;
+  // Сколько ещё нужно отложить на цели в этом периоде
+  goalReserve?: number;
 };
 
 export type BudgetResult = {
+  // Платежи до дохода + отложить на цели
   reserved: number;
+  reservedForGoals: number;
   free: number;
   daysLeft: number;
   dailyLimit: number;
@@ -38,13 +42,14 @@ export type BudgetResult = {
 
 /**
  * Лимит на день до следующего дохода:
- * (баланс − платежи до дохода, включая просроченные − подушка) / дни.
+ * (баланс − платежи до дохода, включая просроченные − взносы на цели − подушка) / дни.
  * Лимит фиксируется на начало дня, поэтому сегодняшние траты прибавляются обратно.
  */
 export function calculateBudget(input: BudgetInput): BudgetResult {
+  const reservedForGoals = Math.max(0, input.goalReserve ?? 0);
   const reserved = input.pendingPayments
     .filter(p => p.dueOn < input.horizon)
-    .reduce((sum, p) => sum + p.amount, 0);
+    .reduce((sum, p) => sum + p.amount, 0) + reservedForGoals;
 
   const free = input.balance - reserved - input.cushion;
   const daysLeft = Math.max(1, daysBetween(input.today, input.horizon));
@@ -55,5 +60,5 @@ export function calculateBudget(input: BudgetInput): BudgetResult {
   if (free < 0 || leftToday < 0) status = "over";
   else if (leftToday < dailyLimit * 0.25) status = "tight";
 
-  return { reserved, free, daysLeft, dailyLimit, leftToday, status };
+  return { reserved, reservedForGoals, free, daysLeft, dailyLimit, leftToday, status };
 }
