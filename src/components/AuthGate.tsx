@@ -30,7 +30,9 @@ export function AuthGate({ botUsername }: { botUsername?: string }) {
       )}
 
       {inTelegram && slow && (
-        <p className="mt-3 max-w-[280px] text-[15px] text-muted">Не получилось войти. Закройте и откройте приложение ещё раз.</p>
+        <p className="mt-3 max-w-[280px] text-[15px] leading-snug text-muted">
+          Не получилось войти. FinCopilot сейчас в закрытом тестировании — доступ по приглашению. Если ссылка у вас есть, откройте её, а потом приложение ещё раз.
+        </p>
       )}
 
       {inTelegram === false && (

@@ -5,6 +5,8 @@ import { BackButton } from "@/components/TelegramBackButton";
 import { AccountsSection, IncomesSection, PreferencesSection, ShortcutSection } from "@/components/settings/SettingsSections";
 import { ImportSection } from "@/components/settings/ImportSection";
 import { listImports } from "@/lib/server/imports";
+import { isOwner, listInvites } from "@/lib/server/access";
+import { FeedbackButton, InvitesSection } from "@/components/settings/CommunitySections";
 
 async function appOrigin() {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
@@ -14,7 +16,10 @@ async function appOrigin() {
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const [data, origin, imports] = await Promise.all([getSettingsData(user), appOrigin(), listImports(user.id)]);
+  const owner = isOwner(user.telegramId);
+  const [data, origin, imports, invites] = await Promise.all([
+    getSettingsData(user), appOrigin(), listImports(user.id), owner ? listInvites(user.id) : Promise.resolve([]),
+  ]);
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME;
 
   return (
@@ -23,6 +28,8 @@ export default async function SettingsPage() {
       <h1 className="mb-5 mt-3 px-1 text-[28px] font-bold tracking-tight">Настройки</h1>
 
       <div className="space-y-7">
+        <FeedbackButton />
+        {owner && <InvitesSection invites={invites} />}
         <AccountsSection accounts={data.accounts} />
         <IncomesSection incomes={data.incomes} />
         <ImportSection imports={imports} botUsername={botUsername} />

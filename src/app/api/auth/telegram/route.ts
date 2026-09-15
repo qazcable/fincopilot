@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isTelegramUserAllowed, validateInitData } from "@/lib/server/telegram-auth";
+import { validateInitData } from "@/lib/server/telegram-auth";
+import { hasAccessByTelegramId } from "@/lib/server/access";
 import { upsertTelegramUser } from "@/lib/server/auth";
 import { createSession } from "@/lib/server/session";
 
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
 
   const tgUser = validateInitData(initData);
   if (!tgUser) return NextResponse.json({ error: "Invalid initData" }, { status: 401 });
-  if (!isTelegramUserAllowed(tgUser.id)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await hasAccessByTelegramId(tgUser.id))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const user = await upsertTelegramUser(tgUser);
   await createSession(user.id);

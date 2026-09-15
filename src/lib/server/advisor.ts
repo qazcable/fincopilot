@@ -9,12 +9,14 @@ import { simulatePayoff } from "@/lib/domain/payoff";
 import { forecastHeadline } from "@/lib/domain/forecast";
 import { getForecast } from "./forecast";
 import { peerSums } from "./peer";
+import { isOwner } from "./access-rules";
 import { ACCOUNT_KINDS, NOT_PEER_OUT, NOT_TRANSIT, OBLIGATION_KINDS, PEER_IN_WHERE, netPeer, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
 
-type AdvisorUser = { id: string; timezone: string; cushion: bigint; firstName: string | null };
+type AdvisorUser = { id: string; timezone: string; cushion: bigint; firstName: string | null; telegramId: bigint };
 
-// Бережём предоплаченный бюджет Gemini
-const DAILY_QUESTIONS = 40;
+// Бережём предоплаченный бюджет Gemini: владельцу больше, приглашённым тестировщикам — меньше
+const OWNER_DAILY_QUESTIONS = 40;
+const GUEST_DAILY_QUESTIONS = 15;
 const HISTORY_TURNS = 8;
 const HISTORY_WINDOW_MS = 12 * 60 * 60 * 1000;
 
@@ -177,7 +179,7 @@ export async function askAdvisor(user: AdvisorUser, question: string, source: "B
       take: HISTORY_TURNS,
     }),
   ]);
-  if (askedToday >= DAILY_QUESTIONS) return { ok: false, reason: "daily_limit" };
+  if (askedToday >= (isOwner(user.telegramId) ? OWNER_DAILY_QUESTIONS : GUEST_DAILY_QUESTIONS)) return { ok: false, reason: "daily_limit" };
 
   const history: AdvisorTurn[] = recent.reverse().map(m => ({ role: m.role === "assistant" ? "assistant" : "user", text: m.text }));
   // Переписка должна начинаться с вопроса пользователя
@@ -207,6 +209,6 @@ export async function getAdvisorHistory(userId: string, take = 40) {
 
 export const ADVISOR_ERRORS: Record<Exclude<AdvisorAnswer, { ok: true }>["reason"], string> = {
   unavailable: "Советник сейчас недоступен — не настроен ИИ.",
-  daily_limit: "На сегодня вопросы закончились (40 в день). Продолжим завтра 🙌",
+  daily_limit: "На сегодня вопросы советнику закончились. Продолжим завтра 🙌",
   failed: "Не получилось ответить — ИИ перегружен. Попробуйте через минуту.",
 };

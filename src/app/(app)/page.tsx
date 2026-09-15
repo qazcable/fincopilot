@@ -11,6 +11,7 @@ import { LimitWarnings } from "@/components/LimitWarnings";
 import { PaymentRow } from "@/components/PaymentRow";
 import { TransactionList } from "@/components/TransactionList";
 import { GoalProgress } from "@/components/GoalsBoard";
+import { FeedbackButton } from "@/components/settings/CommunitySections";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
 import { Card, EmptyState, Money, SectionHeader } from "@/components/ui/primitives";
 import { capitalize, formatDayKey, plural, weekdayOf } from "@/lib/domain/dates";
@@ -152,6 +153,10 @@ export default async function HomePage() {
             </Card>
           )}
         </section>
+
+        <div className="pb-2">
+          <FeedbackButton variant="link" />
+        </div>
       </div>
     </main>
   );

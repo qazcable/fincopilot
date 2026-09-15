@@ -2,7 +2,8 @@ import "server-only";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
-import { isTelegramUserAllowed } from "./telegram-auth";
+import { hasAccess, isOwner, redeemInvite } from "./access";
+import { FEEDBACK_PROMPT, authorLine, feedbackRecipients, saveFeedback } from "./feedback";
 import { captureAudio, captureText, type CaptureResult } from "./capture";
 import { deleteTransaction } from "./ledger";
 import { markPaymentPaid } from "./payments";
@@ -59,12 +60,31 @@ function receiptKeyboard(transactionId: string) {
 
 async function userFromContext(ctx: Context) {
   if (!ctx.from) return null;
-  if (!isTelegramUserAllowed(ctx.from.id)) {
-    await ctx.reply("Это приватный бот.");
-    return null;
-  }
   const existing = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
-  return existing ?? upsertTelegramUser(ctx.from);
+  if (existing && hasAccess(existing)) return existing;
+  if (isOwner(ctx.from.id)) return existing ?? upsertTelegramUser(ctx.from);
+  // Посторонних не заводим в базе — только ответ
+  await ctx.reply("Это закрытый бот 🔒 Доступ — по приглашению. Попросите ссылку у того, кто вас позвал.");
+  return null;
+}
+
+/** Отзыв: ответ на сообщение бота с приглашением написать отзыв */
+function isFeedbackReply(ctx: Context) {
+  const reply = ctx.message?.reply_to_message;
+  return Boolean(reply?.from?.is_bot && reply.text?.startsWith(FEEDBACK_PROMPT));
+}
+
+async function acceptFeedback(ctx: Context, user: NonNullable<Awaited<ReturnType<typeof userFromContext>>>, text: string) {
+  const message = ctx.message;
+  await saveFeedback(user, text, "BOT");
+  // Голос и скриншоты пересылаем владельцам как есть
+  if (message && (message.voice || message.photo || message.document || message.video)) {
+    for (const chatId of feedbackRecipients(user)) {
+      await ctx.api.sendMessage(chatId, `📎 Вложение к отзыву от ${authorLine(user)}:`, { parse_mode: "HTML" }).catch(() => undefined);
+      await ctx.api.copyMessage(chatId, message.chat.id, message.message_id).catch(() => undefined);
+    }
+  }
+  await ctx.reply("Спасибо! 🙏 Отзыв получен — это правда помогает сделать FinCopilot лучше.");
 }
 
 async function replyWithCapture(ctx: Context, user: { id: string; timezone: string; cushion: bigint }, result: CaptureResult) {
@@ -100,6 +120,23 @@ async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>
 
 function registerHandlers(bot: Bot) {
   bot.command("start", async ctx => {
+    // Вход по приглашению: t.me/<бот>?start=inv_<code>
+    const payload = ctx.match?.trim() ?? "";
+    if (payload.startsWith("inv_")) {
+      const result = await redeemInvite(payload.slice(4), ctx.from!);
+      if (!result.ok) {
+        await ctx.reply({
+          invalid: "Приглашение не найдено 🤔 Попросите новую ссылку.",
+          used: "Этой ссылкой уже воспользовались. Попросите новую — она одноразовая.",
+          expired: "Срок приглашения истёк. Попросите новую ссылку.",
+        }[result.reason]);
+        return;
+      }
+      if (result.inviterTelegramId) {
+        await ctx.api.sendMessage(String(result.inviterTelegramId), `🎉 ${authorLine(result.user)} принял(а) приглашение в FinCopilot`, { parse_mode: "HTML" }).catch(() => undefined);
+      }
+    }
+
     const user = await userFromContext(ctx);
     if (!user) return;
 
@@ -131,6 +168,8 @@ function registerHandlers(bot: Bot) {
         "",
         "💬 Задайте вопрос: <i>на чём я могу сэкономить?</i>",
         "📄 А ещё можно прислать PDF-выписку Kaspi Gold, БЦК, Freedom или Alatau — импортирую операции.",
+        "",
+        "🧪 Приложение в тестировании — если что-то неудобно или есть идея, напишите /feedback",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: openAppKeyboard() }
     );
@@ -158,9 +197,32 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.command("help", ctx => ctx.reply(
-    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold, Банк ЦентрКредит, Freedom или Alatau City Bank — импортирую операции без дублей, а переводы между своими картами свяжу.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
+    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold, Банк ЦентрКредит, Freedom или Alatau City Bank — импортирую операции без дублей, а переводы между своими картами свяжу.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.\n\n🧪 /feedback — отзыв или идея: что неудобно, что сломалось, чего не хватает.",
     { parse_mode: "HTML" }
   ));
+
+  bot.command("feedback", async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const text = ctx.match?.trim();
+    if (text) {
+      await acceptFeedback(ctx, user, text);
+      return;
+    }
+    await ctx.reply(`${FEEDBACK_PROMPT} — текстом, голосом или скриншотом. Что неудобно, что сломалось, чего не хватает?`, {
+      reply_markup: { force_reply: true, input_field_placeholder: "Ваш отзыв…" },
+    });
+  });
+
+  // Ответ на приглашение написать отзыв — раньше остальных обработчиков
+  bot.on("message", async (ctx, next) => {
+    if (!isFeedbackReply(ctx)) return next();
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const message = ctx.message;
+    const text = message.text ?? message.caption ?? (message.voice ? "🎙 Голосовое сообщение" : message.photo ? "🖼 Скриншот" : "📎 Вложение");
+    await acceptFeedback(ctx, user, text);
+  });
 
   bot.command(["advice", "ask"], async ctx => {
     const user = await userFromContext(ctx);
@@ -448,6 +510,8 @@ export async function sendScheduledDigests(slot: "morning" | "evening") {
   }
 
   for (const user of users) {
+    // Итоги получают только те, у кого сейчас есть доступ
+    if (!hasAccess(user)) continue;
     const today = dayKeyOf(new Date(), user.timezone);
     if (slot === "morning") {
       if (user.morningDigest) {

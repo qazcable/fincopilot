@@ -34,9 +34,15 @@ model User {
   // sha256 от ключа для Apple Shortcuts; сам ключ показывается один раз
   apiKeyHash       String?  @unique
   apiKeyHint       String?
+  // Доступ по приглашению: когда выдан и кто пригласил (владельцы из ALLOWED_TELEGRAM_IDS входят без приглашения)
+  accessGrantedAt  DateTime?
+  invitedById      String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  invitesCreated   Invite[]   @relation("InviteCreator")
+  invitesUsed      Invite[]   @relation("InviteUser")
+  feedback         Feedback[]
   accounts         Account[]
   categories       Category[]
   transactions     Transaction[]
@@ -48,6 +54,38 @@ model User {
   merchants        MerchantCategory[]
   goals            Goal[]
   advisorMessages  AdvisorMessage[]
+}
+
+// Одноразовое приглашение: ссылка t.me/<бот>?start=inv_<code>
+model Invite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  createdById String
+  createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  // Для кого — чтобы владелец помнил, кому отправил
+  note        String?
+  usedById    String?
+  usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id], onDelete: SetNull)
+  usedAt      DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([createdById])
+}
+
+// Отзывы тестировщиков: из бота (/feedback) и приложения
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  // BOT | APP
+  source    String
+  // Экран приложения, с которого отправлен отзыв
+  page      String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // Переписка с ИИ-советником — общая для бота и приложения

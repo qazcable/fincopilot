@@ -4,12 +4,17 @@ import { prisma } from "./prisma";
 import { readSession } from "./session";
 import type { TelegramUser } from "./telegram-auth";
 import { DEFAULT_CATEGORIES } from "@/lib/domain/constants";
+import { hasAccess } from "./access-rules";
 
 export type AppUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
 
 export const getCurrentUser = cache(async () => {
   const userId = await readSession();
-  if (userId) return prisma.user.findUnique({ where: { id: userId } });
+  if (userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    // Доступ могли закрыть после входа — сессия больше не действует
+    return user && hasAccess(user) ? user : null;
+  }
 
   // Локальная разработка в обычном браузере, без Telegram
   const devTelegramId = process.env.DEV_TELEGRAM_ID;
