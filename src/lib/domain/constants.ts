@@ -50,6 +50,7 @@ export const DEFAULT_CATEGORIES: DefaultCategory[] = [
   { key: "debts", name: "Кредиты и счета", kind: "EXPENSE", emoji: "🧾", color: "#64748B", keywords: ["кредит", "кредитк", "рассрочк", "ипотек", "долг", "zaim", "займ"] },
   { key: "transfers", name: "Переводы людям", kind: "EXPENSE", emoji: "💸", color: "#F97316", keywords: ["перевод", "перевел", "перевёл", "скинул", "отправил"] },
   { key: "cash", name: "Снятие наличных", kind: "EXPENSE", emoji: "🏧", color: "#78716C", keywords: ["банкомат", "наличн", "снял", "снятие"] },
+  { key: "education", name: "Образование", kind: "EXPENSE", emoji: "🎓", color: "#6366F1", keywords: ["университет", "university", "вуз", "обучени", "учеб", "колледж", "college", "академи", "academy", "курсы", "school", "школ", "репетитор", "контракт за обучение"] },
   { key: "other", name: "Другое", kind: "EXPENSE", emoji: "📦", color: "#A1A1AA", keywords: [] },
   { key: "salary", name: "Зарплата", kind: "INCOME", emoji: "💼", color: "#10B981", keywords: ["зарплат", "зп", "аванс", "оклад"] },
   { key: "side", name: "Подработка", kind: "INCOME", emoji: "🧑‍💻", color: "#0EA5E9", keywords: ["подработк", "фриланс", "заказ", "гонорар"] },

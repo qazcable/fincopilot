@@ -3,7 +3,18 @@ import { formatDayKey } from "./dates";
 import { formatMoney } from "./money";
 import { escapeHtml } from "./text";
 
+// Что изменил импорт вне своих операций — чтобы отмена вернула всё как было
+export type ImportLink =
+  | { txId: string; before: { kind: string; accountId: string; toAccountId: string | null; categoryId: string | null } }
+  | { accountId: string; openingDelta: number };
+
 export type ImportSummary = {
+  // Старые черновики Kaspi сохранялись без банка
+  bank?: string;
+  bankTitle?: string;
+  accountName?: string | null;
+  newAccount?: boolean;
+  owner?: { surname: string; name: string } | null;
   cardMask: string | null;
   periodFrom: string | null;
   periodTo: string | null;
@@ -13,6 +24,8 @@ export type ImportSummary = {
   alreadyImported: number;
   manualDuplicates: number;
   skippedOwn: number;
+  // Переводы между своими картами разных банков — связываются с парными операциями
+  ownTransfers?: number;
   // Переводы между картой и счётом накоплений (входят в toImport)
   transfers?: number;
   savingsAccountName?: string | null;
@@ -20,6 +33,10 @@ export type ImportSummary = {
   expense: number;
   needAi: number;
   imported?: number;
+  linkedTransfers?: number;
+  links?: ImportLink[];
+  linkedKeys?: string[];
+  createdAccountId?: string | null;
 };
 
 function period(summary: ImportSummary) {
@@ -30,35 +47,46 @@ function period(summary: ImportSummary) {
   return `${from} – ${formatDayKey(summary.periodTo)} ${summary.periodTo.slice(0, 4)}`;
 }
 
+/** Есть ли что применять: новые операции или переводы между картами */
+export function hasSomethingToImport(summary: ImportSummary) {
+  return summary.toImport > 0 || (summary.ownTransfers ?? 0) > 0;
+}
+
 export function formatImportDraft(summary: ImportSummary) {
   const lines = [
-    `📄 <b>Выписка Kaspi Gold${summary.cardMask ? ` ${summary.cardMask}` : ""}</b>`,
+    `📄 <b>Выписка ${escapeHtml(summary.bankTitle ?? "Kaspi Gold")}${summary.cardMask ? ` ${summary.cardMask}` : ""}</b>`,
     period(summary),
-    "",
-    `Операций в выписке: ${summary.total}`,
   ];
+  if (summary.accountName) {
+    lines.push(summary.newAccount ? `Счёт: <b>${escapeHtml(summary.accountName)}</b> — создам` : `Счёт: ${escapeHtml(summary.accountName)}`);
+  }
+  lines.push("", `Операций в выписке: ${summary.total}`);
   if (summary.toImport > 0) {
     lines.push(`✅ Новых: <b>${summary.toImport}</b> — расходы ${formatMoney(summary.expense)}, поступления ${formatMoney(summary.income)}`);
   }
-  if (summary.alreadyImported > 0) lines.push(`↩️ Уже импортированы раньше: ${summary.alreadyImported}`);
-  if (summary.manualDuplicates > 0) lines.push(`✍️ Уже внесены вручную: ${summary.manualDuplicates}`);
+  if (summary.ownTransfers) {
+    lines.push(`🔗 Переводы между своими картами: ${summary.ownTransfers} — свяжу с другими картами, в расходы и доходы не попадут`);
+  }
   if (summary.transfers) {
     lines.push(`🔁 Переводы на «${escapeHtml(summary.savingsAccountName ?? "Накопления")}» и обратно: ${summary.transfers} — не расходы`);
   }
+  if (summary.alreadyImported > 0) lines.push(`↩️ Уже импортированы раньше: ${summary.alreadyImported}`);
+  if (summary.manualDuplicates > 0) lines.push(`✍️ Уже внесены вручную: ${summary.manualDuplicates}`);
   if (summary.skippedOwn > 0) lines.push(`⏭ Переводы между своими счетами пропущу: ${summary.skippedOwn}`);
-  if (summary.closingBalance !== null && summary.toImport > 0) {
+  if (summary.closingBalance !== null && hasSomethingToImport(summary)) {
     lines.push("", `Баланс карты станет как в выписке: <b>${formatMoney(summary.closingBalance)}</b>`);
   }
-  if (summary.toImport === 0) lines.push("", "Новых операций нет — всё уже учтено 👌");
+  if (!hasSomethingToImport(summary)) lines.push("", "Новых операций нет — всё уже учтено 👌");
   return lines.join("\n");
 }
 
 export function formatImportApplied(summary: ImportSummary) {
   const lines = [
     `✅ <b>Импортировано операций: ${summary.imported ?? summary.toImport}</b>`,
-    period(summary),
+    [summary.bankTitle, period(summary)].filter(Boolean).join(" · "),
   ];
   if (summary.closingBalance !== null) lines.push(`Баланс карты: ${formatMoney(summary.closingBalance)}`);
+  if (summary.linkedTransfers) lines.push(`🔗 Связано переводов между своими картами: ${summary.linkedTransfers}`);
   lines.push("", "Категории подобраны автоматически — поправить можно в истории. Исправленные магазины я запомню.");
   return lines.join("\n");
 }

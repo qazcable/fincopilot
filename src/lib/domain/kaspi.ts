@@ -48,7 +48,7 @@ function parseShortDate(text: string): DayKey | null {
 }
 
 /** Группирует фрагменты страницы в строки по вертикали (сверху вниз) */
-function toLines(items: TextItem[]) {
+export function toLines(items: TextItem[]) {
   const lines: { y: number; cells: TextItem[] }[] = [];
   for (const item of items) {
     if (!item.text.trim()) continue;
@@ -189,13 +189,13 @@ export function classifyKaspiRow(row: KaspiRow): KaspiDecision {
  * Стабильный ключ строки для защиты от повторного импорта.
  * Одинаковые операции в один день различаются порядковым номером.
  */
-export function importKeys(rows: KaspiRow[]) {
+export function importKeys(rows: KaspiRow[], prefix = "kaspi") {
   const seen = new Map<string, number>();
   return rows.map(row => {
     const base = `${row.date}|${row.amount}|${row.operation}|${row.details}`;
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);
-    return `kaspi:${base}|${n}`;
+    return `${prefix}:${base}|${n}`;
   });
 }
 

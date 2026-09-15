@@ -8,21 +8,21 @@ import { cancelImportAction } from "@/lib/actions/imports";
 import { formatDayKeyShort } from "@/lib/domain/dates";
 import { haptic } from "@/lib/client/telegram";
 
-type ImportItem = { id: string; status: "APPLIED" | "CANCELLED"; periodFrom: string | null; periodTo: string | null; imported: number };
+type ImportItem = { id: string; status: "APPLIED" | "CANCELLED"; bankTitle: string; periodFrom: string | null; periodTo: string | null; imported: number };
 
 export function ImportSection({ imports, botUsername }: { imports: ImportItem[]; botUsername?: string }) {
   return (
     <section>
-      <SectionHeader title="Выписка Kaspi" />
+      <SectionHeader title="Выписки банков" />
       <div className="space-y-4 rounded-3xl bg-surface p-4 shadow-card">
         <div className="flex gap-3">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-accent"><FileText className="size-5" /></span>
           <p className="text-[14px] leading-snug text-muted">
-            Импорт операций, которые вы не записали: без дублей, категории подбираются сами, баланс сверяется с Kaspi.
+            Kaspi Gold, Банк ЦентрКредит, Freedom и Alatau City Bank: операции без дублей, категории подбираются сами, баланс сверяется с банком, переводы между своими картами связываются.
           </p>
         </div>
         <ol className="list-decimal space-y-1 pl-5 text-[14px] leading-snug text-muted">
-          <li>Kaspi → <b className="font-medium text-fg">Kaspi Gold</b> → <b className="font-medium text-fg">Выписка</b> → период</li>
+          <li>В приложении банка: карта → <b className="font-medium text-fg">Выписка</b> → PDF за нужный период</li>
           <li><b className="font-medium text-fg">Поделиться</b> → Telegram → {botUsername ? `@${botUsername}` : "бот FinCopilot"}</li>
           <li>В ответ бот покажет сводку — нажмите «Импортировать»</li>
         </ol>
@@ -55,7 +55,7 @@ function ImportRow({ item }: { item: ImportItem }) {
     <div className="flex items-center gap-3 py-3">
       <span className="min-w-0 flex-1">
         <span className={clsx("block text-[14px] font-medium", cancelled && "text-muted line-through")}>
-          {item.periodFrom && item.periodTo ? `${formatDayKeyShort(item.periodFrom)} ${item.periodFrom.slice(2, 4)} – ${formatDayKeyShort(item.periodTo)} ${item.periodTo.slice(2, 4)}` : "Выписка"}
+          {item.bankTitle}{item.periodFrom && item.periodTo ? ` · ${formatDayKeyShort(item.periodFrom)} ${item.periodFrom.slice(2, 4)} – ${formatDayKeyShort(item.periodTo)} ${item.periodTo.slice(2, 4)}` : ""}
         </span>
         <span className="block text-[12px] text-muted">
           {cancelled ? "Отменён" : `${item.imported} операций`}{error ? ` · ${error}` : ""}

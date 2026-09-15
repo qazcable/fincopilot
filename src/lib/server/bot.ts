@@ -12,8 +12,8 @@ import { addDays, dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
 import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./digests";
 import { evaluateCategoryLimit } from "./limits";
-import { applyImport, cancelImport, createKaspiDraft, rememberMerchantCategory } from "./imports";
-import { formatImportApplied, formatImportDraft } from "@/lib/domain/importText";
+import { applyImport, cancelImport, createStatementDraft, rememberMerchantCategory } from "./imports";
+import { formatImportApplied, formatImportDraft, hasSomethingToImport } from "@/lib/domain/importText";
 import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
 import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
 
@@ -130,7 +130,7 @@ function registerHandlers(bot: Bot) {
         "/advice — разбор финансов от ИИ-советника",
         "",
         "💬 Задайте вопрос: <i>на чём я могу сэкономить?</i>",
-        "📄 А ещё можно прислать PDF-выписку Kaspi Gold — импортирую операции.",
+        "📄 А ещё можно прислать PDF-выписку Kaspi Gold, БЦК, Freedom или Alatau — импортирую операции.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: openAppKeyboard() }
     );
@@ -158,7 +158,7 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.command("help", ctx => ctx.reply(
-    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold — импортирую операции без дублей.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
+    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold, Банк ЦентрКредит, Freedom или Alatau City Bank — импортирую операции без дублей, а переводы между своими картами свяжу.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.",
     { parse_mode: "HTML" }
   ));
 
@@ -208,14 +208,14 @@ function registerHandlers(bot: Bot) {
     await replyWithCapture(ctx, user, await captureAudio(user, audio, mimeType, "BOT_VOICE"));
   });
 
-  // 📄 Выписка Kaspi в PDF
+  // 📄 Выписка банка в PDF
   bot.on("message:document", async ctx => {
     const user = await userFromContext(ctx);
     if (!user) return;
     const document = ctx.message.document;
     const isPdf = document.mime_type === "application/pdf" || document.file_name?.toLowerCase().endsWith(".pdf");
     if (!isPdf) {
-      await ctx.reply("Пришлите выписку Kaspi в PDF: Kaspi → Kaspi Gold → Выписка → Поделиться → этот бот.");
+      await ctx.reply("Пришлите выписку банка в PDF: например, Kaspi → Kaspi Gold → Выписка → Поделиться → этот бот.");
       return;
     }
     if ((document.file_size ?? 0) > MAX_DOCUMENT_BYTES) {
@@ -231,16 +231,17 @@ function registerHandlers(bot: Bot) {
       const file = await ctx.getFile();
       const response = await fetch(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`);
       if (!response.ok) throw new Error(`download failed: ${response.status}`);
-      const result = await createKaspiDraft(user, new Uint8Array(await response.arrayBuffer()));
+      const result = await createStatementDraft(user, new Uint8Array(await response.arrayBuffer()));
 
       if (!result.ok) {
-        await edit(result.reason === "not_kaspi"
-          ? "Это не похоже на выписку Kaspi Gold. Выгрузите её в приложении Kaspi: Kaspi Gold → Выписка → Поделиться."
+        await edit(result.reason === "not_supported"
+          ? "Не узнал выписку 🤔 Сейчас понимаю PDF-выписки Kaspi Gold, Банк ЦентрКредит, Freedom и Alatau City Bank."
           : "В выписке не нашлось операций за выбранный период.");
         return;
       }
-      const keyboard = result.summary.toImport > 0
-        ? new InlineKeyboard().text(`✅ Импортировать ${result.summary.toImport}`, `ia:${result.batchId}`).text("Отмена", `ix:${result.batchId}`)
+      const count = result.summary.toImport + (result.summary.ownTransfers ?? 0);
+      const keyboard = hasSomethingToImport(result.summary)
+        ? new InlineKeyboard().text(`✅ Импортировать ${count}`, `ia:${result.batchId}`).text("Отмена", `ix:${result.batchId}`)
         : undefined;
       await edit(formatImportDraft(result.summary), keyboard);
     } catch (error) {
