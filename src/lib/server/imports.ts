@@ -628,10 +628,10 @@ export async function retryImportCategories(userId: string, batchSize = 40) {
   return { merchants: merchants.length, categorized: byMerchant.size, updated };
 }
 
-/** Когда пользователь меняет категорию операции из выписки — запоминаем магазин */
+/** Когда пользователь меняет категорию расхода — запоминаем магазин или описание («сигареты» → «Табак») */
 export async function rememberMerchantCategory(userId: string, transactionId: string, categoryId: string | null) {
   if (!categoryId) return;
-  const tx = await prisma.transaction.findFirst({ where: { id: transactionId, userId, source: "IMPORT", kind: "EXPENSE" } });
+  const tx = await prisma.transaction.findFirst({ where: { id: transactionId, userId, kind: "EXPENSE" } });
   if (!tx?.note) return;
   const merchant = normalizeMerchant(tx.note.replace(/^Возврат:\s*/, ""));
   await prisma.merchantCategory.upsert({

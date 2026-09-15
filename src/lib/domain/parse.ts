@@ -51,7 +51,9 @@ export function quickParse(input: string): QuickParseResult | null {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^[-–—:,.]+|[-–—:,.]+$/g, "")
-    .trim();
+    .trim()
+    // «на сигареты», «за интернет» → «Сигареты», «Интернет»
+    .replace(/^(на|за|в|во|для)\s+(?=\S)/i, "");
 
   const explicitPlus = match[0].trim().startsWith("+");
   const tokens = words(note);

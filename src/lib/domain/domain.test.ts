@@ -60,6 +60,9 @@ describe("quickParse", () => {
 
   it("returns null category for unknown notes", () => {
     expect(quickParse("штука 700")).toMatchObject({ categoryKey: null });
+    expect(quickParse("1300 на сигареты")).toMatchObject({ amount: 130_000, note: "Сигареты", categoryKey: "tobacco" });
+    expect(quickParse("за интернет 7990")).toMatchObject({ note: "Интернет", categoryKey: "home" });
+    expect(quickParse("стики 1500")).toMatchObject({ categoryKey: "tobacco" });
   });
 });
 

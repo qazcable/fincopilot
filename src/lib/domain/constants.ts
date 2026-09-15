@@ -50,6 +50,7 @@ export const DEFAULT_CATEGORIES: DefaultCategory[] = [
   { key: "debts", name: "Кредиты и счета", kind: "EXPENSE", emoji: "🧾", color: "#64748B", keywords: ["кредит", "кредитк", "рассрочк", "ипотек", "долг", "zaim", "займ"] },
   { key: "transfers", name: "Переводы людям", kind: "EXPENSE", emoji: "💸", color: "#F97316", keywords: ["перевод", "перевел", "перевёл", "скинул", "отправил"] },
   { key: "cash", name: "Снятие наличных", kind: "EXPENSE", emoji: "🏧", color: "#78716C", keywords: ["банкомат", "наличн", "снял", "снятие"] },
+  { key: "tobacco", name: "Табак", kind: "EXPENSE", emoji: "🚬", color: "#A16207", keywords: ["сигарет", "сигар", "табак", "tobacco", "iqos", "айкос", "heets", "хитс", "terea", "терея", "стики", "вейп", "vape", "электронк", "одноразк", "жидкость для", "marlboro", "мальборо", "winston", "винстон", "parliament", "парламент", "kent", "кент"] },
   { key: "education", name: "Образование", kind: "EXPENSE", emoji: "🎓", color: "#6366F1", keywords: ["университет", "university", "вуз", "обучени", "учеб", "колледж", "college", "академи", "academy", "курсы", "school", "школ", "репетитор", "контракт за обучение"] },
   { key: "other", name: "Другое", kind: "EXPENSE", emoji: "📦", color: "#A1A1AA", keywords: [] },
   { key: "salary", name: "Зарплата", kind: "INCOME", emoji: "💼", color: "#10B981", keywords: ["зарплат", "зп", "аванс", "оклад"] },

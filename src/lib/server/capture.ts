@@ -2,7 +2,8 @@ import "server-only";
 import { prisma } from "./prisma";
 import { createTransaction, resolveCategoryId } from "./ledger";
 import { markPaymentPaid } from "./payments";
-import { isAiConfigured, parseWithAi } from "./ai";
+import { categorizeMerchants, isAiConfigured, parseWithAi } from "./ai";
+import { normalizeMerchant } from "@/lib/domain/kaspi";
 import { rateLimit } from "./rate-limit";
 import { quickParse } from "@/lib/domain/parse";
 import { addDays, dayKeyOf } from "@/lib/domain/dates";
@@ -62,13 +63,51 @@ async function save(user: CaptureUser, parsed: Parsed, source: TxSource, rawInpu
   return { ok: true, transactionId: transaction.id, linkedPaymentTitle: null };
 }
 
+/** Категория, которую пользователь уже выбирал для такого описания (правка в боте или приложении) */
+async function learnedCategoryId(userId: string, kind: "EXPENSE" | "INCOME", note: string) {
+  if (kind !== "EXPENSE" || !note) return null;
+  const learned = await prisma.merchantCategory.findUnique({
+    where: { userId_merchant: { userId, merchant: normalizeMerchant(note) } },
+    include: { category: true },
+  });
+  return learned?.category.kind === kind && !learned.category.archivedAt ? learned.categoryId : null;
+}
+
+/**
+ * Сумма понятна, а категория по словарю — нет: спрашиваем у ИИ только категорию (короткий дешёвый запрос).
+ * Ответ запоминается, чтобы следующая такая запись обошлась без ИИ.
+ */
+async function aiCategoryId(userId: string, kind: "EXPENSE" | "INCOME", note: string) {
+  if (!note || !isAiConfigured() || !rateLimit(`ai:${userId}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return null;
+  const categories = (await aiCategories(userId)).filter(c => c.kind === kind);
+  try {
+    const categoryId = (await categorizeMerchants([note], categories, 1)).get(0) ?? null;
+    const category = categories.find(c => c.id === categoryId);
+    if (!category) return null;
+    if (kind === "EXPENSE") {
+      await prisma.merchantCategory.upsert({
+        where: { userId_merchant: { userId, merchant: normalizeMerchant(note) } },
+        create: { userId, merchant: normalizeMerchant(note), categoryId: category.id },
+        update: {},
+      });
+    }
+    return category.id;
+  } catch (error) {
+    console.error("AI category failed:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 export async function captureText(user: CaptureUser, text: string, source: TxSource): Promise<CaptureResult> {
   const input = text.trim().slice(0, 500);
   if (!input) return { ok: false, reason: "not_understood" };
 
   const quick = quickParse(input);
   if (quick) {
-    const categoryId = await resolveCategoryId(user.id, quick.kind, quick.categoryKey);
+    const categoryId =
+      await learnedCategoryId(user.id, quick.kind, quick.note) ??
+      (quick.categoryKey ? await resolveCategoryId(user.id, quick.kind, quick.categoryKey) : await aiCategoryId(user.id, quick.kind, quick.note)) ??
+      await resolveCategoryId(user.id, quick.kind, null);
     return save(user, { amount: quick.amount, kind: quick.kind, categoryId, note: quick.note }, source, input);
   }
 
@@ -76,7 +115,7 @@ export async function captureText(user: CaptureUser, text: string, source: TxSou
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
   const parsed = await parseWithAi({ text: input }, await aiCategories(user.id));
   if (!parsed) return { ok: false, reason: "not_understood" };
-  return save(user, parsed, source, input);
+  return save(user, { ...parsed, categoryId: await learnedCategoryId(user.id, parsed.kind, parsed.note) ?? parsed.categoryId }, source, input);
 }
 
 export async function captureAudio(user: CaptureUser, audio: Buffer, mimeType: string, source: TxSource): Promise<CaptureResult> {
@@ -84,5 +123,5 @@ export async function captureAudio(user: CaptureUser, audio: Buffer, mimeType: s
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
   const parsed = await parseWithAi({ audio, mimeType }, await aiCategories(user.id));
   if (!parsed) return { ok: false, reason: "not_understood" };
-  return save(user, parsed, source, "🎙 голосовое сообщение");
+  return save(user, { ...parsed, categoryId: await learnedCategoryId(user.id, parsed.kind, parsed.note) ?? parsed.categoryId }, source, "🎙 голосовое сообщение");
 }
