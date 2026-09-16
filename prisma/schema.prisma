@@ -41,6 +41,11 @@ model User {
   lastWinbackOn        String?
   winbackCount         Int      @default(0)
   onboardedAt      DateTime?
+  // Настройка в чате с ботом: шаг balance | day | amount и ответы, собранные до завершения
+  botOnboardingStep String?
+  botOnboardingData Json?
+  // Первая запись отпразднована (конфетти) — один раз за всё время
+  firstCaptureCelebratedAt DateTime?
   // sha256 от ключа для Apple Shortcuts; сам ключ показывается один раз
   apiKeyHash       String?  @unique
   apiKeyHint       String?

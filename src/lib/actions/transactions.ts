@@ -6,7 +6,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
 import { createTransaction, createTransfer, deleteTransaction, resolveCategoryId } from "@/lib/server/ledger";
-import { notifyCategoryLimit } from "@/lib/server/bot";
+import { notifyCategoryLimit, notifyGoalsReached } from "@/lib/server/bot";
 import { rememberMerchantCategory } from "@/lib/server/imports";
 import type { TxKind } from "@/lib/domain/constants";
 import { localDateTimeToInstant } from "@/lib/domain/dates";
@@ -83,6 +83,8 @@ export async function saveTransaction(input: TransactionInput): Promise<ActionRe
 
   // Предупреждение о лимите категории уходит в бот после ответа, не задерживая интерфейс
   if (savedCategoryId) after(() => notifyCategoryLimit(user, savedCategoryId, occurredAt));
+  // Баланс счёта накоплений мог дотянуть цель
+  after(() => notifyGoalsReached(user.id));
 
   revalidatePath("/", "layout");
   return { ok: true };
@@ -120,6 +122,8 @@ async function saveTransfer(userId: string, data: TransactionInput & { occurredA
       source: "APP",
     });
   }
+  // Перевод на счёт накоплений — главный способ дойти до цели
+  after(() => notifyGoalsReached(userId));
   revalidatePath("/", "layout");
   return { ok: true };
 }

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
@@ -38,6 +39,8 @@ export async function saveGoal(input: GoalFormInput): Promise<ActionResult> {
     throw error;
   }
 
+  // Цель могла оказаться уже достигнутой (например, сумму уменьшили)
+  after(async () => (await import("@/lib/server/bot")).notifyGoalsReached(user.id));
   revalidatePath("/", "layout");
   return { ok: true };
 }

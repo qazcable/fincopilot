@@ -12,10 +12,8 @@ import { MAX_AMOUNT_MINOR, toDb } from "@/lib/domain/money";
 import { ACCOUNT_KINDS } from "@/lib/domain/constants";
 import { isCurrencyCode } from "@/lib/domain/currency";
 import { conversionFactor, convertUserAmounts } from "@/lib/server/currency-convert";
-import { getPlan, startTrial } from "@/lib/server/plan";
-import { awardReferralBonus } from "@/lib/server/access";
-import { notifyReferralReward } from "@/lib/server/bot";
-import { REFERRAL_BONUS_DAYS } from "@/lib/domain/plan";
+import { getPlan } from "@/lib/server/plan";
+import { finishOnboarding, rewardInviter, type OnboardingInput } from "@/lib/server/onboarding";
 import type { ActionResult } from "./transactions";
 
 const balance = z.number().int().min(-MAX_AMOUNT_MINOR).max(MAX_AMOUNT_MINOR);
@@ -25,48 +23,12 @@ function done(): ActionResult {
   return { ok: true };
 }
 
-const onboardingSchema = z.object({
-  balance,
-  incomeDay: z.number().int().min(1).max(31).nullable(),
-  incomeAmount: z.number().int().positive().max(MAX_AMOUNT_MINOR).nullable(),
-  currency: z.string().optional(),
-});
-
-export async function completeOnboarding(input: z.infer<typeof onboardingSchema>): Promise<ActionResult> {
+export async function completeOnboarding(input: OnboardingInput): Promise<ActionResult> {
   const user = await requireUser();
-  const parsed = onboardingSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Проверьте данные" };
-  const { balance: startBalance, incomeDay, incomeAmount, currency } = parsed.data;
-
-  await prisma.$transaction(async tx => {
-    const current = (await getAccountBalances(user.id, tx)).find(a => a.isDefault);
-    if (current) {
-      const hasHistory = current.balance !== current.openingBalance;
-      // Введённый баланс — текущий: учитываем уже внесённые операции (например, из выписки).
-      // Пропуск шага (0) при уже сверенной истории баланс не трогает.
-      if (startBalance !== 0 || !hasHistory) {
-        await tx.account.update({
-          where: { id: current.id },
-          data: { openingBalance: toDb(current.openingBalance + startBalance - current.balance) },
-        });
-      }
-    }
-    if (incomeDay) {
-      await tx.recurringIncome.create({
-        data: { userId: user.id, title: "Зарплата", dayOfMonth: incomeDay, amount: incomeAmount ? toDb(incomeAmount) : null },
-      });
-    }
-    // Для тенге по умолчанию показываем и доллары; для других валют — без второй валюты
-    const currencyData = isCurrencyCode(currency) ? { currency, secondaryCurrency: currency === "KZT" ? "USD" : "KZT" } : {};
-    await tx.user.update({ where: { id: user.id }, data: { onboardedAt: new Date(), ...currencyData } });
-  });
-  // Первые две недели — полный Pro, чтобы человек увидел все возможности
-  await startTrial(user.id);
-  // Бонус пригласившему начисляется только когда приглашённый реально настроил профиль — не за саму регистрацию
-  after(async () => {
-    const reward = await awardReferralBonus(user.id);
-    if (reward) await notifyReferralReward(reward.referrerTelegramId, REFERRAL_BONUS_DAYS);
-  });
+  const result = await finishOnboarding(user.id, input);
+  if (!result.ok) return result;
+  // Бонус пригласившему — после ответа, чтобы экран не ждал отправки в Telegram
+  if (result.firstTime) after(() => rewardInviter(user.id));
   return done();
 }
 

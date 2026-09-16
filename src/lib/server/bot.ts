@@ -1,7 +1,8 @@
 import "server-only";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import { cardsEnabled, renderCard, warmCards } from "./cards/render";
-import { fitCaption, setupCard } from "@/lib/domain/cards";
+import { fitCaption, goalCard, setupCard } from "@/lib/domain/cards";
+import { checkGoalsReached } from "./goal-events";
 import type { EffectName } from "@/lib/domain/botui";
 import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
@@ -31,6 +32,7 @@ import {
 import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/lib/domain/guide";
 import { runWithCurrency } from "./currency-context";
 import { getBudgetSnapshot } from "./overview";
+import { registerOnboarding, startOnboarding, type OnboardingHelpers } from "./bot-onboarding";
 import { getNbkRates } from "./rates";
 import { extractPdfItems } from "./pdf";
 import { isAiConfigured, parseLoansScreenshot, transcribeAudio } from "./ai";
@@ -99,6 +101,12 @@ async function sendBotMessage(
   };
   return options.effect ? withEffect(options.effect, send) : send({});
 }
+
+const onboardingHelpers: OnboardingHelpers = {
+  userFromContext: ctx => userFromContext(ctx),
+  sendBotMessage: (api, chatId, message, options) => sendBotMessage(api, chatId, message, options),
+  appUrl: () => appUrl(),
+};
 
 function appUrl() {
   const url = process.env.APP_URL;
@@ -281,14 +289,29 @@ async function multiReceiptView(user: ReceiptUser, transactionIds: string[]) {
 }
 
 /** Чеки операций: одна — обычный чек; несколько — одно сообщение со списком и кнопками для каждой строки */
+/** Самая первая запись человека — празднуем один раз за всё время */
+async function claimFirstCapture(userId: string) {
+  const { count } = await prisma.user.updateMany({ where: { id: userId, firstCaptureCelebratedAt: null }, data: { firstCaptureCelebratedAt: new Date() } });
+  return count > 0;
+}
+
+const FIRST_CAPTURE_LINE = "\n\n🎉 Первая запись — отличное начало!";
+
 export async function sendReceipts(api: Bot["api"], chatId: string, user: ReceiptUser, items: CapturedItem[]) {
+  const first = await claimFirstCapture(user.id);
+  const send = (html: string, reply_markup: InlineKeyboard) => first
+    ? withEffect("confetti", extra => api.sendMessage(chatId, html + FIRST_CAPTURE_LINE, { parse_mode: "HTML", reply_markup, ...extra }))
+    : api.sendMessage(chatId, html, { parse_mode: "HTML", reply_markup });
+
   if (items.length === 1) {
     const receipt = await buildReceipt(user, items[0].transactionId, items[0].linkedPaymentTitle);
-    if (receipt) await api.sendMessage(chatId, receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(items[0].transactionId) });
+    if (receipt) await send(receipt.html, receiptKeyboard(items[0].transactionId));
+    await notifyGoalsReached(user.id);
     return { limitHit: receipt?.limitLevel === 100, kind: receipt?.transaction.kind ?? null };
   }
   const view = await multiReceiptView(user, items.map(i => i.transactionId));
-  await api.sendMessage(chatId, view.html, { parse_mode: "HTML", reply_markup: view.keyboard });
+  await send(view.html, view.keyboard);
+  await notifyGoalsReached(user.id);
   return { limitHit: false, kind: null };
 }
 
@@ -316,6 +339,9 @@ function registerHandlers(bot: Bot) {
       : null;
     await runWithCurrency(currency, next);
   });
+
+  // Настройка в чате: её ответы перехватываются раньше записи трат
+  registerOnboarding(bot, onboardingHelpers);
 
   bot.command("start", async ctx => {
     // Вход по приглашению: t.me/<бот>?start=inv_<code>
@@ -373,29 +399,8 @@ function registerHandlers(bot: Bot) {
       return;
     }
 
-    const keyboard = new InlineKeyboard().text("📖 Как пользоваться — инструкция", "g:new").row();
-    if (url) keyboard.webApp("💸 Открыть приложение", url);
-    await ctx.reply(
-      [
-        `Привет${user.firstName ? `, ${escapeHtml(user.firstName)}` : ""}! Я FinCopilot — помогу держать финансы под контролем 👋`,
-        "",
-        "<b>Что я умею:</b>",
-        "💸 Считаю, сколько можно потратить сегодня, чтобы хватило до зарплаты",
-        "✍️ Записываю траты сообщением или голосом: <code>кофе 1200</code>",
-        "🏦 Напоминаю о кредитах и платежах",
-        "🎯 Помогаю копить к цели и вижу кассовые разрывы заранее",
-        "🤖 Отвечаю на вопросы о ваших деньгах: <i>на чём сэкономить?</i>",
-        "",
-        "<b>С чего начать:</b>",
-        "1. Откройте приложение и укажите, сколько денег на карте и когда зарплата.",
-        "2. Добавьте кредиты и счета.",
-        "3. Записывайте траты сюда, в чат.",
-        "",
-        "Подробно о каждой функции — в инструкции 👇",
-        "🧪 Приложение в тестировании — идеи и замечания присылайте через /feedback",
-      ].join("\n"),
-      { parse_mode: "HTML", reply_markup: keyboard }
-    );
+    // Новичок настраивается прямо в чате
+    await startOnboarding(ctx, user, onboardingHelpers);
   });
 
   // Инструкция отдельным сообщением — приветствие остаётся в чате
@@ -805,6 +810,7 @@ function registerHandlers(bot: Bot) {
           : new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`).style("danger"),
       });
       await offerTransferSuggestions(ctx, user);
+      await notifyGoalsReached(user.id);
     } catch (error) {
       console.error("Apply import failed:", errorMessage(error));
       await ctx.editMessageText("Не получилось импортировать 😕 Черновик сохранён — пришлите выписку ещё раз.").catch(() => undefined);
@@ -1015,6 +1021,35 @@ async function sendCategoryLimit(user: { id: string; timezone: string; telegramI
   }
 }
 
+/** Поздравление с достигнутой целью: карточка-трофей с конфетти. Ошибки не мешают основному действию */
+export async function notifyGoalsReached(userId: string) {
+  if (!isBotConfigured()) return;
+  try {
+    const reached = await checkGoalsReached(userId);
+    if (reached.length === 0) return;
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const bot = await getBot();
+    const url = appUrl();
+    await runWithCurrency(user.currency, async () => {
+      for (const goal of reached) {
+        await sendBotMessage(bot.api, String(user.telegramId), {
+          text: lines(
+            "🏆 " + h(`Цель «${escapeHtml(goal.title)}» достигнута`),
+            `${formatMoney(goal.amount)} накоплено. Так держать!`,
+          ),
+          card: goalCard(goal),
+        }, {
+          cards: user.digestCards,
+          markup: url ? new InlineKeyboard().webApp("Мои цели", `${url}/goals`) : undefined,
+          effect: "confetti",
+        });
+      }
+    });
+  } catch (error) {
+    console.error("Goal notify failed:", errorMessage(error));
+  }
+}
+
 /** Уведомление пригласившему: друг настроил профиль — начислен бонус Pro */
 export async function notifyReferralReward(referrerTelegramId: bigint, days: number) {
   if (!isBotConfigured()) return;
@@ -1177,6 +1212,8 @@ export async function sendScheduledDigests(slot: "morning" | "evening") {
       if (user.weeklyDigest && isMonday(today)) {
         await deliver(user, "lastWeeklyOn", () => buildWeekly(user));
       }
+      // Страховка: цель могла закрыться переводом, который бот не видел
+      await notifyGoalsReached(user.id);
       await maybeSendTrialReminder(bot, user);
       await maybeSendWinback(bot, user);
     } else if (user.eveningDigest) {

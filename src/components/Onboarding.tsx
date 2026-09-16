@@ -8,11 +8,11 @@ import { Button } from "./ui/primitives";
 import { completeOnboarding } from "@/lib/actions/settings";
 import { haptic } from "@/lib/client/telegram";
 import { CURRENCIES, CURRENCY_CODES, type CurrencyCode } from "@/lib/domain/currency";
+import { ONBOARDING_CURRENCIES } from "@/lib/domain/onboarding";
 import { CurrencyProvider, useCurrency } from "./CurrencyProvider";
 
 const DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
 
-const ONBOARDING_CURRENCIES: CurrencyCode[] = ["KZT", "USD", "EUR", "RUB", "KGS", "UZS"];
 
 export function Onboarding({ firstName }: { firstName: string | null }) {
   const [step, setStep] = useState<0 | 1 | 2>(0);
