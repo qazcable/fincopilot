@@ -442,26 +442,26 @@ export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string |
         ) : null}
 
         <ol className="list-decimal space-y-1.5 pl-5 text-[14px] leading-snug text-muted">
+          <li>В приложении «Команды» создайте команду: сначала действие <b className="font-medium text-fg">«Диктовать текст»</b>, под ним — «Получить содержимое URL».</li>
           <li>
-            В приложении «Команды» создайте команду и добавьте действие <b className="font-medium text-fg">«Записать аудио»</b>:
-            начать <b className="font-medium text-fg">сразу</b>, завершить <b className="font-medium text-fg">через 8 секунд</b>.
-          </li>
-          <li>
-            Добавьте «Получить содержимое URL». Адрес:{" "}
+            URL:{" "}
             <button type="button" onClick={() => copy(endpoint, "url")} className="font-medium text-accent underline-offset-2 hover:underline">
               {copied === "url" ? "скопировано" : endpoint}
             </button>
-            , метод POST.
+            , метод POST, JSON: <code>text</code> = диктованный текст.
           </li>
           <li>Заголовок <code>Authorization</code>: <code>Bearer ваш_ключ</code>.</li>
-          <li>Тип запроса — <b className="font-medium text-fg">Форма</b>, поле <code>audio</code> типа «Файл» = записанное аудио.</li>
           <li>Добавьте «Показать результат» и назначьте команду на Action Button.</li>
         </ol>
 
+        <div className="space-y-1.5 rounded-2xl bg-warning-soft p-3.5 text-[14px] leading-snug text-warning">
+          <p className="font-semibold">Приходит «Пустой текст»?</p>
+          <p>Проверьте порядок действий: «Диктовать текст» должно быть <b className="font-semibold">выше</b> «Получить содержимое URL». Если они поменялись местами, запрос уходит раньше, чем вы успели сказать, — и на сервер приходит пустая строка.</p>
+        </div>
+
         <div className="space-y-1.5 rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted">
-          <p className="font-semibold text-fg">🎙 Почему запись, а не диктовка</p>
-          <p>Действие «Диктовать текст» из-под Action Button запускается в фоне, микрофон не включается и на сервер уходит пустой текст. Запись звука работает всегда, а расшифровывает её ИИ — в одной фразе можно назвать сразу несколько трат: «кофе 1200, такси полторы тысячи и продукты 8 тысяч».</p>
-          <p className="text-[12px] text-faint">Если удобнее печатать: вместо записи возьмите действие «Спросить» и отправляйте JSON с полем <code>text</code>.</p>
+          <p className="font-semibold text-fg">🎙 Вариант с записью голоса</p>
+          <p>Вместо диктовки можно взять «Записать аудио» (начать сразу, завершить через 8 секунд), а в «Получить содержимое URL» выбрать тело <b className="font-semibold">Форма</b> и поле <code>audio</code> = записанный файл. Запись разберёт ИИ — в одной фразе можно назвать сразу несколько трат: «кофе 1200, такси полторы тысячи и продукты 8 тысяч».</p>
         </div>
 
         <div className="space-y-1.5 rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted">
