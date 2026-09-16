@@ -12,7 +12,8 @@ import type { ActionResult } from "@/lib/actions/transactions";
 import { ACCOUNT_KINDS, type AccountKind } from "@/lib/domain/constants";
 import { CURRENCIES, CURRENCY_CODES, type CurrencyCode } from "@/lib/domain/currency";
 import { minorToInput, parseAmount } from "@/lib/domain/money";
-import { haptic } from "@/lib/client/telegram";
+import { getWebApp, haptic } from "@/lib/client/telegram";
+import { ACTION_BUTTON_PATH, BACK_TAP_PATH, SHORTCUT_NAME, pathText } from "@/lib/domain/shortcut";
 import { useCurrency } from "../CurrencyProvider";
 import type { AccountDto } from "@/lib/server/queries";
 
@@ -393,18 +394,33 @@ export function CurrencySection({ currency, secondary, ratesDate }: { currency: 
 
 // ── Быстрая команда iPhone ────────────────────────────────
 
-export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string | null; endpoint: string }) {
+export function ShortcutSection({
+  apiKeyHint,
+  endpoint,
+  installUrl,
+  audioInstallUrl,
+}: {
+  apiKeyHint: string | null;
+  endpoint: string;
+  installUrl: string | null;
+  audioInstallUrl: string | null;
+}) {
   const [key, setKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const revoke = useAction();
 
   function generate() {
+    setError(null);
     start(async () => {
       const result = await createShortcutKey();
       if (result.ok) {
         haptic.success();
         setKey(result.key);
+      } else {
+        haptic.error();
+        setError(result.error);
       }
     });
   }
@@ -420,51 +436,101 @@ export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string |
     }
   }
 
+  function install(url: string) {
+    haptic.tap();
+    // Ссылку открывает Safari, а он передаёт её приложению «Команды»
+    const webApp = getWebApp();
+    if (webApp) webApp.openLink(url);
+    else window.open(url, "_blank");
+  }
+
   return (
-    <section>
-      <SectionHeader title="Кнопка на iPhone" />
+    <section id="shortcut">
+      <SectionHeader title="Запись трат одним касанием" />
       <div className="space-y-4 rounded-3xl bg-surface p-4 shadow-card">
         <div className="flex gap-3">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-accent"><KeyRound className="size-5" /></span>
           <p className="text-[14px] leading-snug text-muted">
-            Запишите трату нажатием кнопки Action Button: быстрая команда отправит текст или голос сюда.
+            Двойное касание по задней панели iPhone или кнопка действия — говорите «кофе 1200», и трата записана.
           </p>
         </div>
 
-        {key ? (
-          <div className="space-y-2">
-            <p className="text-[13px] font-medium text-warning">Скопируйте ключ сейчас — он больше не будет показан</p>
-            <button type="button" onClick={() => copy(key, "key")} className="pressable flex w-full items-center gap-2 rounded-2xl bg-surface-2 px-4 py-3 text-left">
-              <code className="min-w-0 flex-1 break-all text-[13px]">{key}</code>
-              {copied === "key" ? <Check className="size-4 text-positive" /> : <Copy className="size-4 text-muted" />}
-            </button>
+        <div className="space-y-2">
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-faint">Шаг 1 · Ключ</p>
+          {key ? (
+            <>
+              <p className="text-[13px] font-medium text-warning">Скопируйте ключ сейчас — он больше не будет показан</p>
+              <button type="button" onClick={() => copy(key, "key")} className="pressable flex w-full items-center gap-2 rounded-2xl bg-surface-2 px-4 py-3 text-left">
+                <code className="min-w-0 flex-1 break-all text-[13px]">{key}</code>
+                {copied === "key" ? <Check className="size-4 text-positive" /> : <Copy className="size-4 text-muted" />}
+              </button>
+            </>
+          ) : apiKeyHint ? (
+            <p className="rounded-2xl bg-surface-2 px-4 py-3 text-[14px]">Ключ активен: <code>fc_…{apiKeyHint}</code></p>
+          ) : null}
+          <div className="grid gap-2">
+            <Button variant={apiKeyHint || key ? "secondary" : "primary"} loading={pending} onClick={generate}>
+              {apiKeyHint || key ? "Создать новый ключ" : "Создать ключ"}
+            </Button>
+            {apiKeyHint && !key && (
+              <Button variant="ghost" loading={revoke.pending} onClick={() => revoke.run(removeShortcutKey, () => setKey(null))}>Отключить</Button>
+            )}
           </div>
-        ) : apiKeyHint ? (
-          <p className="rounded-2xl bg-surface-2 px-4 py-3 text-[14px]">Ключ активен: <code>fc_…{apiKeyHint}</code></p>
-        ) : null}
-
-        <ol className="list-decimal space-y-1.5 pl-5 text-[14px] leading-snug text-muted">
-          <li>В приложении «Команды» создайте команду: сначала действие <b className="font-medium text-fg">«Диктовать текст»</b>, под ним — «Получить содержимое URL».</li>
-          <li>
-            URL:{" "}
-            <button type="button" onClick={() => copy(endpoint, "url")} className="font-medium text-accent underline-offset-2 hover:underline">
-              {copied === "url" ? "скопировано" : endpoint}
-            </button>
-            , метод POST, JSON: <code>text</code> = диктованный текст.
-          </li>
-          <li>Заголовок <code>Authorization</code>: <code>Bearer ваш_ключ</code>.</li>
-          <li>Добавьте «Показать результат» и назначьте команду на Action Button.</li>
-        </ol>
-
-        <div className="space-y-1.5 rounded-2xl bg-warning-soft p-3.5 text-[14px] leading-snug text-warning">
-          <p className="font-semibold">Приходит «Пустой текст»?</p>
-          <p>Проверьте порядок действий: «Диктовать текст» должно быть <b className="font-semibold">выше</b> «Получить содержимое URL». Если они поменялись местами, запрос уходит раньше, чем вы успели сказать, — и на сервер приходит пустая строка.</p>
+          {error && <p className="text-center text-[13px] font-medium text-negative">{error}</p>}
+          {apiKeyHint && <p className="text-[12px] text-faint">Новый ключ отключит старую команду — её нужно будет установить заново.</p>}
         </div>
 
-        <div className="space-y-1.5 rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted">
-          <p className="font-semibold text-fg">🎙 Вариант с записью голоса</p>
-          <p>Вместо диктовки можно взять «Записать аудио» (начать сразу, завершить через 8 секунд), а в «Получить содержимое URL» выбрать тело <b className="font-semibold">Форма</b> и поле <code>audio</code> = записанный файл. Запись разберёт ИИ — в одной фразе можно назвать сразу несколько трат: «кофе 1200, такси полторы тысячи и продукты 8 тысяч».</p>
+        {installUrl && (
+          <div className="space-y-2">
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-faint">Шаг 2 · Команда</p>
+            <Button size="lg" className="w-full" onClick={() => install(installUrl)}>Установить команду</Button>
+            <p className="text-[13px] leading-snug text-muted">При установке iPhone спросит ключ — вставьте его из шага 1.</p>
+            {audioInstallUrl && (
+              <button type="button" onClick={() => install(audioInstallUrl)} className="pressable text-[13px] font-medium text-accent">
+                Вариант с записью голоса — для шумных мест
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-faint">Шаг {installUrl ? 3 : 2} · Назначьте команду</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-1 rounded-2xl bg-surface-2 p-3.5">
+              <p className="text-[14px] font-semibold">Касание задней панели</p>
+              <p className="text-[12px] text-faint">iPhone 8 и новее, iOS 14+</p>
+              <p className="text-[13px] leading-snug text-muted">{pathText(BACK_TAP_PATH)}</p>
+              <p className="text-[12px] leading-snug text-faint">На «Тройное касание» можно поставить вариант с голосом.</p>
+            </div>
+            <div className="space-y-1 rounded-2xl bg-surface-2 p-3.5">
+              <p className="text-[14px] font-semibold">Кнопка действия</p>
+              <p className="text-[12px] text-faint">iPhone 15 Pro и новее</p>
+              <p className="text-[13px] leading-snug text-muted">{pathText(ACTION_BUTTON_PATH)}</p>
+            </div>
+          </div>
         </div>
+
+        <details className="group rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted" open={!installUrl}>
+          <summary className="cursor-pointer list-none font-semibold text-fg">Собрать команду вручную</summary>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-5">
+            <li>В приложении «Команды» создайте команду «{SHORTCUT_NAME}»: сначала действие <b className="font-medium text-fg">«Диктовать текст»</b>, под ним — «Получить содержимое URL».</li>
+            <li>
+              URL:{" "}
+              <button type="button" onClick={() => copy(endpoint, "url")} className="font-medium text-accent underline-offset-2 hover:underline">
+                {copied === "url" ? "скопировано" : endpoint}
+              </button>
+              , метод POST, JSON: <code>text</code> = диктованный текст.
+            </li>
+            <li>Заголовок <code>Authorization</code> = ваш ключ.</li>
+            <li>Добавьте «Показать результат».</li>
+          </ol>
+          <p className="mt-2 text-warning">
+            Приходит «Пустой текст»? «Диктовать текст» должно стоять <b className="font-semibold">выше</b> «Получить содержимое URL».
+          </p>
+          <p className="mt-2">
+            🎙 С записью голоса: вместо диктовки — «Записать аудио» (начать сразу, завершить через 8 секунд), тело запроса <b className="font-semibold">Форма</b>, поле <code>audio</code> = записанный файл. В одной фразе можно назвать сразу несколько трат.
+          </p>
+        </details>
 
         <div className="space-y-1.5 rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted">
           <p className="font-semibold text-fg">⚡ Автозапись оплат Apple Pay</p>
@@ -473,15 +539,6 @@ export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string |
           <p className="pt-1 font-semibold text-fg">✉️ SMS банка</p>
           <p>Автоматизация «Сообщение» → отправитель — банк → JSON: <code>sms</code> = Содержимое сообщения.</p>
           <p className="text-[12px] text-faint">Дубли не появятся: такие оплаты узнаются при импорте выписки.</p>
-        </div>
-
-        <div className="grid gap-2">
-          <Button variant={apiKeyHint ? "secondary" : "primary"} loading={pending} onClick={generate}>
-            {apiKeyHint ? "Создать новый ключ" : "Создать ключ"}
-          </Button>
-          {apiKeyHint && (
-            <Button variant="ghost" loading={revoke.pending} onClick={() => revoke.run(removeShortcutKey, () => setKey(null))}>Отключить</Button>
-          )}
         </div>
       </div>
     </section>

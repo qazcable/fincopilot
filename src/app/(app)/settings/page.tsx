@@ -13,6 +13,7 @@ import { SubscriptionSection } from "@/components/settings/SubscriptionSection";
 import { CloseAppButton } from "@/components/CloseAppButton";
 import { TransferSuggestions } from "@/components/settings/TransferSuggestions";
 import { subscriptionSummary } from "@/lib/server/plan";
+import { shortcutLinks } from "@/lib/domain/shortcut";
 
 async function appOrigin() {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
@@ -27,6 +28,7 @@ export default async function SettingsPage() {
     subscriptionSummary(user), listTransferSuggestions(user),
   ]);
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME;
+  const shortcut = shortcutLinks(process.env);
 
   return (
     <main className="safe-top px-4 pt-4">
@@ -50,7 +52,7 @@ export default async function SettingsPage() {
         <TransferSuggestions suggestions={transferSuggestions} />
         <ImportSection imports={imports} botUsername={botUsername} />
         <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} digestCards={data.digestCards} />
-        <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} />
+        <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} installUrl={shortcut.install} audioInstallUrl={shortcut.audio} />
 
         <CloseAppButton variant="row" />
 

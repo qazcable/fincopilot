@@ -22,7 +22,8 @@ export async function revokeApiKey(userId: string) {
 }
 
 export async function findUserByApiKey(authorization: string | null) {
-  const key = authorization?.match(/^Bearer\s+(fc_[\w-]{20,})$/)?.[1];
+  // Команда из iCloud-ссылки подставляет ключ как есть, без «Bearer» — принимаем оба вида
+  const key = authorization?.trim().match(/^(?:Bearer\s+)?(fc_[\w-]{20,})$/)?.[1];
   if (!key) return null;
   const user = await prisma.user.findUnique({ where: { apiKeyHash: hashKey(key) } });
   // Ключ человека, у которого закрыли доступ, больше не работает

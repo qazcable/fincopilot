@@ -7,7 +7,9 @@ import type { EffectName } from "@/lib/domain/botui";
 import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
 import { hasAccess, isOwner, ownerTelegramIds, redeemInvite } from "./access";
-import { canImport, grantPro, grantProForever, revokePro } from "./plan";
+import { canImport, getPlan, grantPro, grantProForever, revokePro } from "./plan";
+import { rotateApiKey } from "./api-key";
+import { ACTION_BUTTON_PATH, BACK_TAP_PATH, pathText, shortcutLinks } from "@/lib/domain/shortcut";
 import { FREE_LIMITS, PRICE, planLabel, planState, priceText } from "@/lib/domain/plan";
 import { FEEDBACK_PROMPT, authorLine, feedbackRecipients, saveFeedback } from "./feedback";
 import { captureAudio, captureText, type CaptureResult, type CapturedItem } from "./capture";
@@ -473,6 +475,7 @@ function registerHandlers(bot: Bot) {
         "/limits — лимиты по категориям",
         "/advice — разбор месяца от советника",
         "/rates — курс Нацбанка",
+        "/iphone — запись касанием по iPhone",
         "/subscribe — тариф и Pro",
         "/guide — подробная инструкция",
         "/feedback — отзыв или идея",
@@ -557,6 +560,87 @@ function registerHandlers(bot: Bot) {
   });
 
   // 💱 Курсы Нацбанка РК
+  // 📱 Запись трат касанием по задней панели iPhone или кнопкой действия
+  function shortcutIntro() {
+    const links = shortcutLinks(process.env);
+    const url = appUrl();
+    const keyboard = new InlineKeyboard().text("🔑 Создать ключ", "sh:k").style("primary");
+    if (links.install) keyboard.row().url("Установить команду", links.install);
+    if (url) keyboard.row().webApp("Подробнее в приложении", `${url}/settings#shortcut`);
+    return {
+      text: lines(
+        "📱 " + h("Трата одним касанием"),
+        "Двойное касание по задней панели iPhone (или кнопка действия) — говорите «кофе 1200», и трата записана.",
+        "",
+        "1. Создайте ключ",
+        links.install ? "2. Установите команду и вставьте ключ" : "2. Соберите команду по инструкции в приложении",
+        `3. Назначьте её: ${pathText(BACK_TAP_PATH)}`,
+        "",
+        muted(`Кнопка действия (iPhone 15 Pro и новее): ${pathText(ACTION_BUTTON_PATH)}`),
+      ),
+      keyboard,
+    };
+  }
+
+  bot.command("iphone", async ctx => {
+    if (!(await userFromContext(ctx))) return;
+    const view = shortcutIntro();
+    await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+  });
+
+  bot.callbackQuery(/^sh:(i|k|ky|x|d)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const action = ctx.match[1];
+
+    if (action === "i") {
+      await ctx.answerCallbackQuery();
+      const view = shortcutIntro();
+      await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+      return;
+    }
+    if (action === "d") {
+      await ctx.answerCallbackQuery("Удалено");
+      await ctx.deleteMessage().catch(() => ctx.editMessageText("Сообщение с ключом скрыто."));
+      return;
+    }
+    if (action === "x") {
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText("Ок, ключ оставляю прежним.").catch(() => undefined);
+      return;
+    }
+
+    if (!getPlan(user).pro) {
+      await ctx.answerCallbackQuery();
+      await ctx.reply("✨ Запись с iPhone входит в Pro. Подробнее — /subscribe");
+      return;
+    }
+    if (action === "k" && user.apiKeyHint) {
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(
+        lines(`У вас уже есть ключ <code>fc_…${escapeHtml(user.apiKeyHint)}</code>.`, "Новый ключ отключит старую команду — её нужно будет установить заново."),
+        { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("Создать новый", "sh:ky").style("danger").text("Отмена", "sh:x") },
+      ).catch(() => undefined);
+      return;
+    }
+
+    const key = await rotateApiKey(user.id);
+    await ctx.answerCallbackQuery("Ключ создан");
+    const links = shortcutLinks(process.env);
+    const keyboard = new InlineKeyboard().copyText("📋 Скопировать ключ", key).style("success");
+    if (links.install) keyboard.row().url("Установить команду", links.install);
+    keyboard.row().text("Удалить сообщение", "sh:d");
+    await ctx.editMessageText(
+      lines(
+        "🔑 " + h("Ключ создан"),
+        links.install ? "Нажмите «Скопировать ключ» и вставьте его при установке команды." : "Нажмите «Скопировать ключ» и вставьте его в заголовок Authorization команды.",
+        "",
+        muted("Ключ виден только здесь — не пересылайте это сообщение. После установки его можно удалить."),
+      ),
+      { parse_mode: "HTML", reply_markup: keyboard },
+    ).catch(() => undefined);
+  });
+
   bot.command(["rates", "kurs"], async ctx => {
     const user = await userFromContext(ctx);
     if (!user) return;
