@@ -11,6 +11,12 @@ export const PRICE = {
 /** Бесплатный пробный период Pro для новых пользователей */
 export const TRIAL_DAYS = 14;
 
+/** Бонус пригласившему за приглашённого, который закончил настройку профиля */
+export const REFERRAL_BONUS_DAYS = 14;
+
+/** Сколько приглашений может создать один пользователь — защита от накрутки бонусов */
+export const MAX_INVITES_PER_USER = 10;
+
 /** Что можно на бесплатном тарифе */
 export const FREE_LIMITS = {
   /** Записей голосом и текстом в месяц (ручной ввод в приложении — без ограничений) */
@@ -53,6 +59,13 @@ export function planState(user: PlanUser, now = new Date()): PlanState {
 export function extendUntil(current: Date | null, months: number, now = new Date()) {
   const from = current && current > now ? new Date(current) : new Date(now);
   from.setMonth(from.getMonth() + months);
+  return from;
+}
+
+/** Новая дата окончания подписки в днях — для дневных грантов (реферальный бонус) */
+export function extendUntilDays(current: Date | null, days: number, now = new Date()) {
+  const from = current && current > now ? new Date(current) : new Date(now);
+  from.setDate(from.getDate() + days);
   return from;
 }
 

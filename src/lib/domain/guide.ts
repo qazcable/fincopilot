@@ -1,4 +1,4 @@
-import { FREE_LIMITS, PRICE } from "./plan";
+import { FREE_LIMITS, PRICE, REFERRAL_BONUS_DAYS } from "./plan";
 
 // Инструкция: общие тексты для бота (/guide) и приложения (/guide). Каждая тема — что это, зачем и как работает.
 
@@ -183,6 +183,20 @@ export const GUIDE_TOPICS: GuideTopic[] = [
       `Цена: ${PRICE.monthly.toLocaleString("ru-RU")} ${PRICE.currency} в месяц или ${PRICE.yearly.toLocaleString("ru-RU")} ${PRICE.currency} в год — выгоднее на 28%.`,
       "Новым пользователям первые 14 дней Pro бесплатно, карта не нужна.",
       "Подключить: «Настройки» → «Подписка» или команда /subscribe в боте.",
+    ],
+    appPath: "/settings",
+  },
+  {
+    id: "invite",
+    emoji: "🤝",
+    title: "Пригласить друга",
+    what: "Одноразовая ссылка в Telegram, чтобы дать доступ близкому человеку.",
+    why: `Когда друг настроит профиль, вам начислят +${REFERRAL_BONUS_DAYS} дней Pro — и ему тоже, в виде пробного периода.`,
+    how: [
+      "Настройки → «Пригласить близких» → «Создать».",
+      "Отправьте ссылку в Telegram или скопируйте её.",
+      "Ссылка одноразовая и действует 30 дней.",
+      "Как только друг закончит настройку — бот пришлёт, что бонус начислен.",
     ],
     appPath: "/settings",
   },

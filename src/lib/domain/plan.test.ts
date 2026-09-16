@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extendUntil, planState } from "./plan";
+import { extendUntil, extendUntilDays, planState } from "./plan";
 
 const NOW = new Date("2026-09-16T10:00:00Z");
 const days = (n: number) => new Date(NOW.getTime() + n * 24 * 60 * 60 * 1000);
@@ -45,5 +45,19 @@ describe("extendUntil", () => {
 
   it("истёкшая подписка продлевается от сегодня", () => {
     expect(extendUntil(new Date("2026-01-01T10:00:00Z"), 1, NOW)).toEqual(new Date("2026-10-16T10:00:00Z"));
+  });
+});
+
+describe("extendUntilDays", () => {
+  it("бонус без подписки считается от сегодня", () => {
+    expect(extendUntilDays(null, 14, NOW)).toEqual(new Date("2026-09-30T10:00:00Z"));
+  });
+
+  it("бонус добавляется к действующему пробному периоду или подписке", () => {
+    expect(extendUntilDays(days(5), 14, NOW)).toEqual(days(19));
+  });
+
+  it("бонус на истёкший период считается от сегодня, а не от старой даты", () => {
+    expect(extendUntilDays(days(-30), 14, NOW)).toEqual(new Date("2026-09-30T10:00:00Z"));
   });
 });

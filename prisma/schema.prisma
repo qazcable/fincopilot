@@ -34,6 +34,10 @@ model User {
   lastMorningOn    String?
   lastEveningOn    String?
   lastWeeklyOn     String?
+  // Дедупликация напоминаний жизненного цикла (тот же паттерн, что выше)
+  lastTrialReminderOn String?
+  lastWinbackOn        String?
+  winbackCount         Int      @default(0)
   onboardedAt      DateTime?
   // sha256 от ключа для Apple Shortcuts; сам ключ показывается один раз
   apiKeyHash       String?  @unique
@@ -80,6 +84,8 @@ model Payment {
   // KASPI | CARD | GIFT
   method    String   @default("KASPI")
   note      String?
+  // Дневной грант (реферальный бонус); для помесячных платежей — null
+  days      Int?
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -116,6 +122,8 @@ model Invite {
   usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id], onDelete: SetNull)
   usedAt      DateTime?
   revokedAt   DateTime?
+  // Когда пригласившему начислен бонус за онбординг приглашённого
+  rewardedAt  DateTime?
   createdAt   DateTime  @default(now())
 
   @@index([createdById])

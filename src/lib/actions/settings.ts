@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/server/auth";
 import { prisma } from "@/lib/server/prisma";
@@ -12,6 +13,9 @@ import { ACCOUNT_KINDS } from "@/lib/domain/constants";
 import { isCurrencyCode } from "@/lib/domain/currency";
 import { conversionFactor, convertUserAmounts } from "@/lib/server/currency-convert";
 import { getPlan, startTrial } from "@/lib/server/plan";
+import { awardReferralBonus } from "@/lib/server/access";
+import { notifyReferralReward } from "@/lib/server/bot";
+import { REFERRAL_BONUS_DAYS } from "@/lib/domain/plan";
 import type { ActionResult } from "./transactions";
 
 const balance = z.number().int().min(-MAX_AMOUNT_MINOR).max(MAX_AMOUNT_MINOR);
@@ -58,6 +62,11 @@ export async function completeOnboarding(input: z.infer<typeof onboardingSchema>
   });
   // Первые две недели — полный Pro, чтобы человек увидел все возможности
   await startTrial(user.id);
+  // Бонус пригласившему начисляется только когда приглашённый реально настроил профиль — не за саму регистрацию
+  after(async () => {
+    const reward = await awardReferralBonus(user.id);
+    if (reward) await notifyReferralReward(reward.referrerTelegramId, REFERRAL_BONUS_DAYS);
+  });
   return done();
 }
 

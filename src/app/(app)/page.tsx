@@ -17,8 +17,11 @@ import { getNbkRates } from "@/lib/server/rates";
 import { CURRENCIES, isCurrencyCode } from "@/lib/domain/currency";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
 import { CloseAppButton } from "@/components/CloseAppButton";
+import { ActivationChecklist } from "@/components/ActivationChecklist";
 import { Card, EmptyState, Money, SectionHeader } from "@/components/ui/primitives";
 import { capitalize, formatDayKey, plural, weekdayOf } from "@/lib/domain/dates";
+import { hasInvited } from "@/lib/server/access";
+import { REFERRAL_BONUS_DAYS } from "@/lib/domain/plan";
 
 /** Первая неделя после знакомства с приложением */
 function onboardedRecently(onboardedAt: Date | null) {
@@ -34,7 +37,7 @@ function greeting(hour: number) {
 
 export default async function HomePage() {
   const user = await requireUser();
-  const [data, forecast, nbk] = await Promise.all([getHomeData(user), getForecast(user), getNbkRates()]);
+  const [data, forecast, nbk, invited] = await Promise.all([getHomeData(user), getForecast(user), getNbkRates(), hasInvited(user.id)]);
   // Курс для главной: второй валюты пользователя, иначе доллара (для тенге — прямо из Нацбанка)
   const rateCode = user.secondaryCurrency && user.secondaryCurrency !== "KZT" ? user.secondaryCurrency : "USD";
   const headlineRate = nbk.rates.find(r => r.code === rateCode);
@@ -64,18 +67,14 @@ export default async function HomePage() {
       </header>
 
       <div className="space-y-6 px-4">
-        {/* Первую неделю после знакомства — заметная подсказка про инструкцию */}
+        {/* Первую неделю после знакомства — чек-лист первых шагов вместо одной ссылки на гайд */}
         {onboardedRecently(user.onboardedAt) && (
-          <Link href="/guide" className="pressable block">
-            <Card className="flex items-center gap-3 bg-accent-soft p-4">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent text-xl text-accent-fg" aria-hidden>📖</span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px] font-semibold">Как пользоваться FinCopilot</span>
-                <span className="block text-[13px] leading-snug text-muted">Что умеет каждая функция и как она работает</span>
-              </span>
-              <ChevronRight className="size-4 shrink-0 text-faint" />
-            </Card>
-          </Link>
+          <ActivationChecklist items={[
+            { id: "transaction", emoji: "✍️", title: "Запишите первую трату", href: "/history", done: data.recent.length > 0 },
+            { id: "payments", emoji: "🗓️", title: "Добавьте кредиты и платежи", href: "/payments", done: data.upcoming.length > 0 },
+            { id: "goal", emoji: "🎯", title: "Поставьте цель накоплений", href: "/goals", done: data.goals.length > 0 },
+            { id: "invite", emoji: "🤝", title: `Пригласите друга — +${REFERRAL_BONUS_DAYS} дней Pro`, href: "/settings#invites", done: invited },
+          ]} />
         )}
 
         <BudgetHero

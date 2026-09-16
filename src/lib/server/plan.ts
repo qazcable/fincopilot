@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "./prisma";
 import { dayKeyOf } from "@/lib/domain/dates";
 import { toDb } from "@/lib/domain/money";
-import { FREE_LIMITS, TRIAL_DAYS, extendUntil, planState, type PlanState, type PlanUser } from "@/lib/domain/plan";
+import { FREE_LIMITS, TRIAL_DAYS, extendUntil, extendUntilDays, planState, type PlanState, type PlanUser } from "@/lib/domain/plan";
 
 export type { PlanState };
 
@@ -66,6 +66,29 @@ export async function grantPro(userId: string, months: number, options: { amount
         note: options.note?.slice(0, 200) ?? null,
       },
     }),
+  ]);
+  return updated.proUntil;
+}
+
+/**
+ * Дневной грант (реферальный бонус за приглашённого друга). Бессрочному Pro продлевать нечего —
+ * платёж всё равно логируется, чтобы бонус был виден в истории.
+ */
+export async function grantProDays(userId: string, days: number, options: { method?: string; note?: string | null } = {}) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { plan: true, proUntil: true, trialEndsAt: true } });
+  if (!user) return null;
+  const payment = prisma.payment.create({
+    data: { userId, months: 0, days, amount: toDb(0), method: options.method ?? "REFERRAL", note: options.note?.slice(0, 200) ?? null },
+  });
+  const state = planState(user);
+  if (state.kind === "forever") {
+    await payment;
+    return null;
+  }
+  const until = extendUntilDays(state.until, days);
+  const [updated] = await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { plan: "PRO", proUntil: until } }),
+    payment,
   ]);
   return updated.proUntil;
 }

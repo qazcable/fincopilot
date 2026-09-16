@@ -7,7 +7,7 @@ import { AccountsSection, CurrencySection, IncomesSection, PreferencesSection, S
 import { getNbkRates } from "@/lib/server/rates";
 import { ImportSection } from "@/components/settings/ImportSection";
 import { listImports, listTransferSuggestions } from "@/lib/server/imports";
-import { isOwner, listInvites } from "@/lib/server/access";
+import { listInvites } from "@/lib/server/access";
 import { FeedbackButton, InvitesSection } from "@/components/settings/CommunitySections";
 import { SubscriptionSection } from "@/components/settings/SubscriptionSection";
 import { CloseAppButton } from "@/components/CloseAppButton";
@@ -22,9 +22,8 @@ async function appOrigin() {
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  const owner = isOwner(user.telegramId);
   const [data, origin, imports, invites, nbk, plan, transferSuggestions] = await Promise.all([
-    getSettingsData(user), appOrigin(), listImports(user.id), owner ? listInvites(user.id) : Promise.resolve([]), getNbkRates(),
+    getSettingsData(user), appOrigin(), listImports(user.id), listInvites(user.id), getNbkRates(),
     subscriptionSummary(user), listTransferSuggestions(user),
   ]);
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME;
@@ -44,7 +43,7 @@ export default async function SettingsPage() {
         </Link>
         <SubscriptionSection plan={plan} payContact={process.env.PAY_KASPI ?? null} />
         <FeedbackButton />
-        {owner && <InvitesSection invites={invites} />}
+        <InvitesSection invites={invites} />
         <AccountsSection accounts={data.accounts} />
         <IncomesSection incomes={data.incomes} />
         <CurrencySection currency={user.currency} secondary={user.secondaryCurrency} ratesDate={nbk.date} />

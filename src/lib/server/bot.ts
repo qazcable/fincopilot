@@ -4,14 +4,14 @@ import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
 import { hasAccess, isOwner, ownerTelegramIds, redeemInvite } from "./access";
 import { canImport, grantPro, grantProForever, revokePro } from "./plan";
-import { FREE_LIMITS, PRICE, planLabel, planState } from "@/lib/domain/plan";
+import { FREE_LIMITS, PRICE, planLabel, planState, priceText } from "@/lib/domain/plan";
 import { FEEDBACK_PROMPT, authorLine, feedbackRecipients, saveFeedback } from "./feedback";
 import { captureAudio, captureText, type CaptureResult, type CapturedItem } from "./capture";
 import { deleteTransaction } from "./ledger";
 import { markPaymentPaid } from "./payments";
 import { budgetLine, buildMultiReceipt, buildReceipt, escapeHtml, siblingTransactionIds } from "./receipt";
 import { formatMoney, fromDb } from "@/lib/domain/money";
-import { addDays, dayKeyOf, formatDayKeyShort, relativeDays, daysBetween } from "@/lib/domain/dates";
+import { addDays, dayKeyOf, formatDayKeyShort, plural, relativeDays, daysBetween } from "@/lib/domain/dates";
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
 import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./digests";
 import { evaluateCategoryLimit } from "./limits";
@@ -878,6 +878,21 @@ async function sendCategoryLimit(user: { id: string; timezone: string; telegramI
   }
 }
 
+/** Уведомление пригласившему: друг настроил профиль — начислен бонус Pro */
+export async function notifyReferralReward(referrerTelegramId: bigint, days: number) {
+  if (!isBotConfigured()) return;
+  try {
+    const bot = await getBot();
+    await bot.api.sendMessage(
+      String(referrerTelegramId),
+      `🎉 Друг настроил FinCopilot по вашей ссылке — вам начислено +${days} ${plural(days, "день", "дня", "дней")} Pro`,
+      { parse_mode: "HTML", reply_markup: openAppKeyboard("Открыть FinCopilot") }
+    );
+  } catch (error) {
+    console.error("Referral reward notify failed:", errorMessage(error));
+  }
+}
+
 type ScheduledUser = Awaited<ReturnType<typeof prisma.user.findMany>>[number];
 
 /** Отдельные напоминания о платежах — для тех, кто выключил утренние итоги */
@@ -907,12 +922,63 @@ async function sendPaymentReminders(bot: Bot, user: ScheduledUser) {
  * «Захват» отправки на сегодня: условное обновление даты последней отправки.
  * Если крон запустится повторно или параллельно, второй вызов ничего не отправит.
  */
-async function claim(userId: string, field: "lastMorningOn" | "lastEveningOn" | "lastWeeklyOn", today: string, previous: string | null) {
+async function claim(userId: string, field: "lastMorningOn" | "lastEveningOn" | "lastWeeklyOn" | "lastTrialReminderOn" | "lastWinbackOn", today: string, previous: string | null) {
   const { count } = await prisma.user.updateMany({
     where: { id: userId, OR: [{ [field]: null }, { [field]: { not: today } }] },
     data: { [field]: today },
   });
   return { claimed: count > 0, release: () => prisma.user.update({ where: { id: userId }, data: { [field]: previous } }) };
+}
+
+/** «Пробный период заканчивается» — за 3 дня и за 1 день до конца */
+async function maybeSendTrialReminder(bot: Bot, user: ScheduledUser) {
+  if (!user.remindersEnabled) return;
+  const state = planState(user);
+  if (state.kind !== "trial" || state.daysLeft === null) return;
+  if (state.daysLeft !== 3 && state.daysLeft !== 1) return;
+
+  const today = dayKeyOf(new Date(), user.timezone);
+  const lock = await claim(user.id, "lastTrialReminderOn", today, user.lastTrialReminderOn);
+  if (!lock.claimed) return;
+  try {
+    const text = state.daysLeft === 1
+      ? `⏰ Завтра заканчивается пробный период Pro.\n\nБез Pro — ${FREE_LIMITS.aiPerMonth} записей ИИ в месяц и один импорт выписки. Чтобы сохранить голос без ограничений, советника и прогноз — ${priceText()}.`
+      : `⏳ Пробный период Pro заканчивается через 3 дня.\n\nЧтобы сохранить все возможности — ${priceText()}.`;
+    await bot.api.sendMessage(String(user.telegramId), text, { parse_mode: "HTML", reply_markup: openAppKeyboard("Продлить Pro") });
+  } catch (error) {
+    await lock.release();
+    console.error("Trial reminder failed:", errorMessage(error));
+  }
+}
+
+/** «Давно не было записей» — не чаще раза в 14 дней, максимум 3 раза за всё время */
+async function maybeSendWinback(bot: Bot, user: ScheduledUser) {
+  if (!user.remindersEnabled || user.winbackCount >= 3) return;
+  // Первую неделю после онбординга ведёт чек-лист первых шагов — не дублируем напоминания
+  if (!user.onboardedAt || Date.now() - user.onboardedAt.getTime() < 7 * 24 * 60 * 60 * 1000) return;
+
+  const today = dayKeyOf(new Date(), user.timezone);
+  if (user.lastWinbackOn && daysBetween(user.lastWinbackOn, today) < 14) return;
+
+  const [lastTx, txCount] = await Promise.all([
+    prisma.transaction.findFirst({ where: { userId: user.id }, orderBy: { occurredAt: "desc" }, select: { occurredAt: true } }),
+    prisma.transaction.count({ where: { userId: user.id } }),
+  ]);
+  // Не было настоящей активности — это недоактивация, а не «ушёл», ей займётся чек-лист
+  if (!lastTx || txCount < 3) return;
+  const silence = daysBetween(dayKeyOf(lastTx.occurredAt, user.timezone), today);
+  if (silence < 5) return;
+
+  const lock = await claim(user.id, "lastWinbackOn", today, user.lastWinbackOn);
+  if (!lock.claimed) return;
+  try {
+    const text = `👋 Не было записей уже ${silence} ${plural(silence, "день", "дня", "дней")}.\n\n${await budgetLine(user)}\n\nЗапишите трату сообщением или голосом — бот справится.`;
+    await bot.api.sendMessage(String(user.telegramId), text, { parse_mode: "HTML", reply_markup: openAppKeyboard("Открыть FinCopilot") });
+    await prisma.user.update({ where: { id: user.id }, data: { winbackCount: { increment: 1 } } });
+  } catch (error) {
+    await lock.release();
+    console.error("Winback failed:", errorMessage(error));
+  }
 }
 
 /** Утренние (+ недельные по понедельникам) и вечерние итоги. Вызывается кроном. */
@@ -968,6 +1034,8 @@ export async function sendScheduledDigests(slot: "morning" | "evening") {
       if (user.weeklyDigest && isMonday(today)) {
         await deliver(user, "lastWeeklyOn", () => buildWeekly(user));
       }
+      await maybeSendTrialReminder(bot, user);
+      await maybeSendWinback(bot, user);
     } else if (user.eveningDigest) {
       await deliver(user, "lastEveningOn", () => buildEvening(user));
     }

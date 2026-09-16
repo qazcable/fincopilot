@@ -8,6 +8,7 @@ import { Button, Field, SectionHeader, inputClass } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { createInviteAction, revokeInviteAction, sendFeedbackAction } from "@/lib/actions/community";
 import { haptic } from "@/lib/client/telegram";
+import { REFERRAL_BONUS_DAYS } from "@/lib/domain/plan";
 
 export type InviteItem = {
   id: string;
@@ -17,6 +18,7 @@ export type InviteItem = {
   expired: boolean;
   usedBy: { name: string; username: string | null; onboarded: boolean } | null;
   usedAt: string | null;
+  rewarded: boolean;
 };
 
 const SHARE_TEXT = "Привет! Приглашаю протестировать FinCopilot — помощник по личным финансам в Telegram. Ссылка одноразовая:";
@@ -31,7 +33,7 @@ function openLink(url: string) {
   else window.open(url, "_blank");
 }
 
-/** Владелец: приглашения для близких */
+/** Приглашения для близких: доступен каждому пользователю, награда — за реально настроенный профиль */
 export function InvitesSection({ invites }: { invites: InviteItem[] }) {
   const [note, setNote] = useState("");
   const [created, setCreated] = useState<string | null>(null);
@@ -68,13 +70,13 @@ export function InvitesSection({ invites }: { invites: InviteItem[] }) {
   const joined = invites.filter(i => i.usedBy).length;
 
   return (
-    <section>
+    <section id="invites">
       <SectionHeader title="Пригласить близких" />
       <div className="space-y-4 rounded-3xl bg-surface p-4 shadow-card">
         <div className="flex gap-3">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-accent"><UserPlus className="size-5" /></span>
           <p className="text-[14px] leading-snug text-muted">
-            Одноразовая ссылка на 30 дней. Человек откроет её в Telegram — и получит доступ. У каждого свои данные, вы их не видите.
+            Ссылка на 30 дней. Друг настроит профиль — и вам обоим достанется бонус: ему {REFERRAL_BONUS_DAYS} дней пробного Pro, вам — ещё {REFERRAL_BONUS_DAYS} дней Pro в подарок.
             {joined > 0 && <span className="mt-1 block font-medium text-fg">Уже с нами: {joined}</span>}
           </p>
         </div>
@@ -114,7 +116,7 @@ function InviteRow({ invite }: { invite: InviteItem }) {
   const [confirm, setConfirm] = useState(false);
   const [pending, start] = useTransition();
   const status = invite.usedBy
-    ? `${invite.usedBy.name}${invite.usedBy.username ? ` @${invite.usedBy.username}` : ""} · ${invite.usedBy.onboarded ? "пользуется" : "ещё не настроил"}`
+    ? `${invite.usedBy.name}${invite.usedBy.username ? ` @${invite.usedBy.username}` : ""} · ${invite.usedBy.onboarded ? "пользуется" : "ещё не настроил"}${invite.rewarded ? ` · +${REFERRAL_BONUS_DAYS} дней начислено` : ""}`
     : invite.expired ? "Срок истёк" : "Ждёт, пока откроют";
 
   return (
