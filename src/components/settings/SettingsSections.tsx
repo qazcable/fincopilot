@@ -452,7 +452,18 @@ export function ShortcutSection({ apiKeyHint, endpoint }: { apiKeyHint: string |
           </li>
           <li>Заголовок <code>Authorization</code>: <code>Bearer ваш_ключ</code>.</li>
           <li>Добавьте «Показать результат» и назначьте команду на Action Button.</li>
+          <li>
+            Откройте настройки команды (значок <b className="font-medium text-fg">ⓘ</b> внизу) и включите{" "}
+            <b className="font-medium text-fg">«Показывать при запуске»</b>. Без этого диктовка не слышит голос и присылает пустой текст.
+          </li>
         </ol>
+
+        <div className="space-y-1.5 rounded-2xl bg-warning-soft p-3.5 text-[14px] leading-snug text-warning">
+          <p className="font-semibold">Приходит «Кнопка прислала пустой текст»?</p>
+          <p>1. Включите «Показывать при запуске» в настройках команды.</p>
+          <p>2. Проверьте: Настройки → Основные → Клавиатура → «Включить диктовку».</p>
+          <p>3. Не помогло — замените «Диктовать текст» на «Записать аудио» (начать сразу, остановить через 10 секунд), а в «Получить содержимое URL» выберите тело <b className="font-semibold">Форма</b> и поле <code>audio</code> = записанный файл. Голос разберёт ИИ, и в одной записи можно назвать сразу несколько трат.</p>
+        </div>
 
         <div className="space-y-1.5 rounded-2xl bg-surface-2 p-3.5 text-[14px] leading-snug text-muted">
           <p className="font-semibold text-fg">⚡ Автозапись оплат Apple Pay</p>

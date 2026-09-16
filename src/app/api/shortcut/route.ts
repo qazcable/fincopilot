@@ -44,7 +44,7 @@ async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typ
       });
     } else if (typeof body?.text === "string") {
       incoming = `json text (${body.text.length})`;
-      if (!body.text.trim()) return text("Кнопка прислала пустой текст — похоже, диктовка ничего не записала", 422);
+      if (!body.text.trim()) return text("Пустой текст. В «Командах» откройте настройки команды и включите «Показывать при запуске» — тогда диктовка услышит голос", 422);
       result = await captureText(user, body.text, "SHORTCUT");
     } else {
       console.log("shortcut: json without text", Object.keys(body ?? {}).join(","));
@@ -60,7 +60,7 @@ async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typ
       result = await captureAudio(user, Buffer.from(await audio.arrayBuffer()), audio.type || "audio/m4a", "SHORTCUT");
     } else if (typeof input === "string") {
       incoming = `form text (${input.length})`;
-      if (!input.trim()) return text("Кнопка прислала пустой текст — похоже, диктовка ничего не записала", 422);
+      if (!input.trim()) return text("Пустой текст. В «Командах» откройте настройки команды и включите «Показывать при запуске» — тогда диктовка услышит голос", 422);
       result = await captureText(user, input, "SHORTCUT");
     } else {
       console.log("shortcut: form without text/audio", [...(form?.keys() ?? [])].join(","), contentType);
