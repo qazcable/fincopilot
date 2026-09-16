@@ -21,7 +21,7 @@ import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/li
 import { runWithCurrency } from "./currency-context";
 import { getNbkRates } from "./rates";
 import { extractPdfItems } from "./pdf";
-import { isAiConfigured, parseLoansScreenshot } from "./ai";
+import { isAiConfigured, parseLoansScreenshot, transcribeAudio } from "./ai";
 import { KASPI_LOANS_TITLE, upsertKaspiLoans } from "./loans";
 import { isKaspiLoanStatement, parseKaspiLoanStatement } from "@/lib/domain/kaspiLoans";
 import { CURRENCIES, POPULAR_RATES, isCurrencyCode } from "@/lib/domain/currency";
@@ -85,6 +85,16 @@ function guideMenuKeyboard() {
   return keyboard;
 }
 
+/** Скачивает голосовое сообщение и превращает его в текст */
+async function transcribeVoice(ctx: Context) {
+  const voice = ctx.message?.voice;
+  if (!voice || !isAiConfigured()) return null;
+  const file = await ctx.api.getFile(voice.file_id);
+  const response = await fetch(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`);
+  if (!response.ok) return null;
+  return transcribeAudio(Buffer.from(await response.arrayBuffer()), voice.mime_type || "audio/ogg");
+}
+
 /** Отзыв: ответ на сообщение бота с приглашением написать отзыв */
 function isFeedbackReply(ctx: Context) {
   const reply = ctx.message?.reply_to_message;
@@ -93,7 +103,9 @@ function isFeedbackReply(ctx: Context) {
 
 async function acceptFeedback(ctx: Context, user: NonNullable<Awaited<ReturnType<typeof userFromContext>>>, text: string) {
   const message = ctx.message;
-  await saveFeedback(user, text, "BOT");
+  // Голосовой отзыв расшифровываем — иначе в базе останется только «🎙 Голосовое сообщение»
+  const transcript = message?.voice ? await transcribeVoice(ctx).catch(() => null) : null;
+  await saveFeedback(user, transcript ? `🎙 ${transcript}` : text, "BOT");
   // Голос и скриншоты пересылаем владельцам как есть
   if (message && (message.voice || message.photo || message.document || message.video)) {
     for (const chatId of feedbackRecipients(user)) {

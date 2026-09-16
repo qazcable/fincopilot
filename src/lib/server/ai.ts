@@ -207,6 +207,25 @@ monthlyPayment — ежемесячный платёж в тенге, если �
   }
 }
 
+/** Расшифровка голосового сообщения в текст (для отзывов) */
+export async function transcribeAudio(audio: Buffer, mimeType: string): Promise<string | null> {
+  const ai = getClient();
+  if (!ai) return null;
+  const response = await withRetry(() => ai.models.generateContent({
+    model: MODEL,
+    contents: [{
+      role: "user",
+      parts: [
+        { inlineData: { data: audio.toString("base64"), mimeType } },
+        { text: "Расшифруй это голосовое сообщение дословно. Верни только текст, без пояснений." },
+      ],
+    }],
+    config: { thinkingConfig: THINKING, maxOutputTokens: 2048 },
+  }));
+  const text = response.text?.trim();
+  return text ? text.slice(0, 4000) : null;
+}
+
 const merchantResult = z.object({
   items: z.array(z.object({ index: z.number().int(), categoryId: z.string() })),
 });
