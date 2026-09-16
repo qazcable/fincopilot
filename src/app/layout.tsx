@@ -10,8 +10,12 @@ const onest = Onest({
 });
 
 export const metadata: Metadata = {
+  metadataBase: process.env.APP_URL ? new URL(process.env.APP_URL) : undefined,
   title: "FinCopilot",
-  description: "Личные финансы: сколько можно тратить сегодня, платежи и расходы",
+  applicationName: "FinCopilot",
+  description: "Сколько можно потратить сегодня — чтобы хватило до зарплаты. Траты голосом, платежи, итоги.",
+  appleWebApp: { title: "FinCopilot", statusBarStyle: "black-translucent" },
+  openGraph: { title: "FinCopilot", siteName: "FinCopilot", locale: "ru_RU", type: "website" },
 };
 
 export const viewport: Viewport = {
@@ -20,6 +24,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
+  themeColor: "#09090c",
 };
 
 // Тема Telegram применяется до первой отрисовки, чтобы не было вспышки светлого экрана

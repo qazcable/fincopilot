@@ -308,6 +308,7 @@ export async function getSettingsData(user: AppUser) {
     morningDigest: user.morningDigest,
     eveningDigest: user.eveningDigest,
     weeklyDigest: user.weeklyDigest,
+    digestCards: user.digestCards,
     apiKeyHint: user.apiKeyHint,
   };
 }

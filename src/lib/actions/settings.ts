@@ -167,6 +167,7 @@ const preferencesSchema = z.object({
   morningDigest: z.boolean(),
   eveningDigest: z.boolean(),
   weeklyDigest: z.boolean(),
+  digestCards: z.boolean(),
 });
 
 export async function savePreferences(input: z.infer<typeof preferencesSchema>): Promise<ActionResult> {

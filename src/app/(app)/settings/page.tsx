@@ -49,7 +49,7 @@ export default async function SettingsPage() {
         <CurrencySection currency={user.currency} secondary={user.secondaryCurrency} ratesDate={nbk.date} />
         <TransferSuggestions suggestions={transferSuggestions} />
         <ImportSection imports={imports} botUsername={botUsername} />
-        <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} />
+        <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} digestCards={data.digestCards} />
         <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} />
 
         <CloseAppButton variant="row" />

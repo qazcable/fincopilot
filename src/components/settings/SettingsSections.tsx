@@ -230,12 +230,14 @@ type Preferences = {
   morningDigest: boolean;
   eveningDigest: boolean;
   weeklyDigest: boolean;
+  digestCards: boolean;
 };
 
-const NOTIFICATIONS: { key: "morningDigest" | "eveningDigest" | "weeklyDigest" | "remindersEnabled"; title: string; text: string }[] = [
+const NOTIFICATIONS: { key: "morningDigest" | "eveningDigest" | "weeklyDigest" | "remindersEnabled" | "digestCards"; title: string; text: string }[] = [
   { key: "morningDigest", title: "Утренний прогноз", text: "В 9:00 — сколько можно потратить, платежи и лимиты" },
   { key: "eveningDigest", title: "Итоги дня", text: "В 21:00 — сколько потрачено и лимит на завтра" },
   { key: "weeklyDigest", title: "Итоги недели", text: "По понедельникам — куда ушли деньги" },
+  { key: "digestCards", title: "Итоги картинкой", text: "Утренние, вечерние и недельные итоги — красивой карточкой" },
   { key: "remindersEnabled", title: "Напоминания о платежах", text: "За 2 дня до списания, если утренний прогноз выключен" },
 ];
 

@@ -30,6 +30,8 @@ model User {
   morningDigest    Boolean  @default(true)
   eveningDigest    Boolean  @default(true)
   weeklyDigest     Boolean  @default(true)
+  // Итоги в боте картинкой-карточкой (иначе — текстом)
+  digestCards      Boolean  @default(true)
   // Локальные даты (YYYY-MM-DD) последней отправки — защита от дублей при повторном запуске крона
   lastMorningOn    String?
   lastEveningOn    String?

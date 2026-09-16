@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { sendScheduledDigests } from "@/lib/server/bot";
 
+// Итоги рисуются картинками — на рассылку нужно больше времени
+export const maxDuration = 300;
+
 // Vercel Cron присылает Authorization: Bearer $CRON_SECRET (расписание — в vercel.json)
 function authorized(header: string | null) {
   const secret = process.env.CRON_SECRET;

@@ -1,5 +1,8 @@
 import "server-only";
-import { Bot, InlineKeyboard, type Context } from "grammy";
+import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
+import { cardsEnabled, renderCard, warmCards } from "./cards/render";
+import { fitCaption, setupCard } from "@/lib/domain/cards";
+import type { EffectName } from "@/lib/domain/botui";
 import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
 import { hasAccess, isOwner, ownerTelegramIds, redeemInvite } from "./access";
@@ -13,7 +16,7 @@ import { budgetLine, buildMultiReceipt, buildReceipt, escapeHtml, siblingTransac
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { addDays, dayKeyOf, formatDayKeyShort, plural, relativeDays, daysBetween } from "@/lib/domain/dates";
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
-import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./digests";
+import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly, type BotMessage } from "./digests";
 import { evaluateCategoryLimit } from "./limits";
 import {
   applyImport, cancelImport, createStatementDraft, dismissTransferSuggestions, listTransferSuggestions,
@@ -27,6 +30,7 @@ import {
 } from "./botui";
 import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/lib/domain/guide";
 import { runWithCurrency } from "./currency-context";
+import { getBudgetSnapshot } from "./overview";
 import { getNbkRates } from "./rates";
 import { extractPdfItems } from "./pdf";
 import { isAiConfigured, parseLoansScreenshot, transcribeAudio } from "./ai";
@@ -58,6 +62,42 @@ export async function getBot() {
   initPromise ??= botInstance.init();
   await initPromise;
   return botInstance;
+}
+
+type Markup = NonNullable<Parameters<Bot["api"]["sendMessage"]>[2]>["reply_markup"];
+
+/**
+ * Итоги картинкой-карточкой с текстом в подписи. Если картинка не получилась —
+ * тот же текст обычным сообщением: итоги должны дойти в любом случае.
+ */
+async function sendBotMessage(
+  api: Bot["api"],
+  chatId: string | number,
+  message: BotMessage,
+  options: { cards: boolean; markup?: Markup; effect?: EffectName },
+) {
+  let image: Buffer | null = null;
+  if (options.cards && message.card && cardsEnabled()) {
+    image = await renderCard(message.card).catch(error => {
+      console.error("Card render failed:", errorMessage(error));
+      return null;
+    });
+  }
+
+  const send = (extra: { message_effect_id?: string }): Promise<unknown> => {
+    if (!image) return api.sendMessage(chatId, message.text, { parse_mode: "HTML", reply_markup: options.markup, ...extra });
+    const { caption, rest } = fitCaption(message.text);
+    return api.sendPhoto(chatId, new InputFile(image, "fincopilot.png"), {
+      caption: caption ?? undefined,
+      parse_mode: "HTML",
+      reply_markup: rest ? undefined : options.markup,
+      ...extra,
+    }).then(async sent => {
+      if (rest) await api.sendMessage(chatId, rest, { parse_mode: "HTML", reply_markup: options.markup });
+      return sent;
+    });
+  };
+  return options.effect ? withEffect(options.effect, send) : send({});
 }
 
 function appUrl() {
@@ -310,16 +350,26 @@ function registerHandlers(bot: Bot) {
 
     // Уже настроен — короткое «с возвращением» и нижняя клавиатура
     if (user.onboardedAt) {
-      await ctx.reply(
-        lines(
+      const snapshot = await getBudgetSnapshot(user);
+      await sendBotMessage(ctx.api, ctx.chat.id, {
+        text: lines(
           `С возвращением${user.firstName ? `, ${escapeHtml(user.firstName)}` : ""} 👋`,
           "",
           await budgetLine(user),
           "",
           muted("Пишите траты сюда или голосом. Приложение — кнопка «Финансы» слева от поля ввода."),
         ),
-        { parse_mode: "HTML", reply_markup: mainKeyboard() },
-      );
+        card: setupCard({
+          firstName: user.firstName,
+          today: snapshot.today,
+          horizon: snapshot.horizon,
+          hasIncomeSchedule: snapshot.hasIncomeSchedule,
+          leftToday: snapshot.budget.leftToday,
+          daysLeft: snapshot.budget.daysLeft,
+          trial: false,
+          welcomeBack: true,
+        }),
+      }, { cards: user.digestCards, markup: mainKeyboard() });
       return;
     }
 
@@ -359,16 +409,18 @@ function registerHandlers(bot: Bot) {
   async function runToday(ctx: Context) {
     const user = await userFromContext(ctx);
     if (!user) return;
+    await ctx.replyWithChatAction(user.digestCards ? "upload_photo" : "typing").catch(() => undefined);
     const morning = await buildMorning(user);
-    await ctx.reply(morning.text, { parse_mode: "HTML", reply_markup: morning.keyboard ?? openAppKeyboard("Подробнее") });
+    await sendBotMessage(ctx.api, ctx.chat!.id, morning, { cards: user.digestCards, markup: morning.keyboard ?? openAppKeyboard("Подробнее") });
   }
 
   async function runWeek(ctx: Context) {
     const user = await userFromContext(ctx);
     if (!user) return;
+    await ctx.replyWithChatAction(user.digestCards ? "upload_photo" : "typing").catch(() => undefined);
     const today = dayKeyOf(new Date(), user.timezone);
     const weekly = await buildWeekly(user, { from: addDays(today, -6), to: today });
-    await ctx.reply(weekly.text, { parse_mode: "HTML", reply_markup: openAppKeyboard("Аналитика") });
+    await sendBotMessage(ctx.api, ctx.chat!.id, weekly, { cards: user.digestCards, markup: openAppKeyboard("Аналитика") });
   }
 
   bot.command(["today", "budget"], runToday);
@@ -1073,17 +1125,20 @@ async function maybeSendWinback(bot: Bot, user: ScheduledUser) {
 export async function sendScheduledDigests(slot: "morning" | "evening") {
   const bot = await getBot();
   const users = await prisma.user.findMany({ where: { onboardedAt: { not: null } } });
+  // Шрифты карточек читаются один раз на всю рассылку. Пользователи идут по очереди —
+  // при сотнях получателей понадобится пул из нескольких параллельных отправок.
+  await warmCards();
   const result = { sent: 0, failed: 0 };
 
-  async function deliver(user: ScheduledUser, field: "lastMorningOn" | "lastEveningOn" | "lastWeeklyOn", build: () => Promise<{ text: string; keyboard?: InlineKeyboard }>, after?: () => Promise<unknown>) {
+  async function deliver(user: ScheduledUser, field: "lastMorningOn" | "lastEveningOn" | "lastWeeklyOn", build: () => Promise<BotMessage>, after?: () => Promise<unknown>) {
     const today = dayKeyOf(new Date(), user.timezone);
     const lock = await claim(user.id, field, today, user[field]);
     if (!lock.claimed) return;
     try {
       const message = await build();
-      await bot.api.sendMessage(String(user.telegramId), message.text, {
-        parse_mode: "HTML",
-        reply_markup: message.keyboard ?? openAppKeyboard("Открыть FinCopilot"),
+      await sendBotMessage(bot.api, String(user.telegramId), message, {
+        cards: user.digestCards,
+        markup: message.keyboard ?? openAppKeyboard("Открыть FinCopilot"),
       });
       await after?.();
       result.sent++;

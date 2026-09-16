@@ -9,11 +9,15 @@ import { forecastHeadline } from "@/lib/domain/forecast";
 import { NOT_PEER_OUT, NOT_TRANSIT, PEER_IN_WHERE, netPeer } from "@/lib/domain/constants";
 import { peerSums } from "./peer";
 import { formatMoney, fromDb } from "@/lib/domain/money";
-import { formatEvening, formatLimits, formatMorning, formatWeekly, previousWeek, type CategoryAmount } from "@/lib/domain/digest";
+import {
+  formatEvening, formatLimits, formatMorning, formatWeekly, previousWeek,
+  type CategoryAmount, type EveningInput, type MorningInput, type WeeklyInput,
+} from "@/lib/domain/digest";
+import { eveningCard, morningCard, weeklyCard, type CardData } from "@/lib/domain/cards";
 
 type DigestUser = { id: string; timezone: string; cushion: bigint };
 
-export type BotMessage = { text: string; keyboard?: InlineKeyboard };
+export type BotMessage = { text: string; keyboard?: InlineKeyboard; card?: CardData };
 
 const REMINDER_DAYS = 2;
 
@@ -54,41 +58,43 @@ export async function buildMorning(user: DigestUser): Promise<BotMessage & { pay
   const { year, month } = parseKey(snapshot.today);
   const due = snapshot.pendingPayments.filter(p => daysBetween(snapshot.today, p.dueOn) <= REMINDER_DAYS);
 
-  let text = formatMorning({
+  const input: MorningInput = {
     today: snapshot.today,
     horizon: snapshot.horizon,
     hasIncomeSchedule: snapshot.hasIncomeSchedule,
     budget: snapshot.budget,
     duePayments: due,
     limits: await getMonthLimitLines(user, year, month),
-  });
+  };
+  let text = formatMorning(input);
+  let gapWarning: string | null = null;
 
   // Кассовый разрыв в ближайшую неделю — предупреждаем заранее
   const forecast = await getForecast(user, 14);
   if (forecast.gapStart && forecast.gapStart <= addDays(snapshot.today, 7)) {
     const headline = forecastHeadline(forecast, snapshot.today, formatMoney, day => formatDayKey(day, snapshot.today).toLowerCase());
     text += `\n\n⚠️ <b>${headline.title}</b>\n${headline.text}`;
+    gapWarning = headline.title;
   }
 
   const keyboard = new InlineKeyboard();
   for (const payment of due) keyboard.text(`✅ ${payment.title} — ${formatMoney(payment.amount)}`, `q:${payment.id}`).style("success").row();
-  return { text, keyboard: due.length ? keyboard : undefined, paymentIds: due.map(p => p.id) };
+  return { text, keyboard: due.length ? keyboard : undefined, paymentIds: due.map(p => p.id), card: morningCard(input, gapWarning) };
 }
 
 export async function buildEvening(user: DigestUser): Promise<BotMessage> {
   const snapshot = await getBudgetSnapshot(user);
   const totals = await categoryTotals(user, snapshot.today, addDays(snapshot.today, 1), { excludePayments: true });
-  return {
-    text: formatEvening({
-      today: snapshot.today,
-      horizon: snapshot.horizon,
-      budget: snapshot.budget,
-      spentToday: snapshot.spentToday,
-      incomeToday: totals.income,
-      topCategories: totals.items.slice(0, 3),
-      tomorrowLimit: snapshot.tomorrowLimit,
-    }),
+  const input: EveningInput = {
+    today: snapshot.today,
+    horizon: snapshot.horizon,
+    budget: snapshot.budget,
+    spentToday: snapshot.spentToday,
+    incomeToday: totals.income,
+    topCategories: totals.items.slice(0, 3),
+    tomorrowLimit: snapshot.tomorrowLimit,
   };
+  return { text: formatEvening(input), card: eveningCard(input) };
 }
 
 /** Итоги за период [from, to]; по умолчанию — прошлая неделя */
@@ -102,17 +108,16 @@ export async function buildWeekly(user: DigestUser, period?: { from: DayKey; to:
   ]);
   const { year, month } = parseKey(to);
 
-  return {
-    text: formatWeekly({
-      from,
-      to,
-      expense: current.expense,
-      previousExpense: previous.expense,
-      income: current.income,
-      categories: current.items,
-      limits: await getMonthLimitLines(user, year, month),
-    }),
+  const input: WeeklyInput = {
+    from,
+    to,
+    expense: current.expense,
+    previousExpense: previous.expense,
+    income: current.income,
+    categories: current.items,
+    limits: await getMonthLimitLines(user, year, month),
   };
+  return { text: formatWeekly(input), card: weeklyCard(input) };
 }
 
 export async function buildLimitsMessage(user: DigestUser): Promise<BotMessage> {
