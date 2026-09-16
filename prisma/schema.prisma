@@ -237,6 +237,8 @@ model Transaction {
   importBatchId      String?
   importBatch        ImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
   importKey          String?
+  // Пользователь подтвердил, что это не перевод между своими счетами — больше не предлагать связывать
+  notOwnTransfer     Boolean           @default(false)
   createdAt          DateTime          @default(now())
 
   @@unique([userId, importKey])

@@ -466,7 +466,11 @@ export async function applyImport(user: ImportUser, batchId: string): Promise<Ap
  * Всё, что изменено, сохраняется в импорт `batchId`, чтобы его отмена вернула операции.
  */
 async function relinkOwnTransfers(user: ImportUser, batchId: string) {
-  const pairs = await findOwnTransferPairs(user);
+  return applyOwnTransferPairs(await findOwnTransferPairs(user), batchId);
+}
+
+/** Превращает найденные пары в переводы и записывает откат в импорт `batchId` */
+async function applyOwnTransferPairs(pairs: Awaited<ReturnType<typeof findOwnTransferPairs>>, batchId: string) {
   if (pairs.length === 0) return 0;
 
   await prisma.$transaction(async tx => {
@@ -497,17 +501,23 @@ async function relinkOwnTransfers(user: ImportUser, batchId: string) {
   return pairs.length;
 }
 
-/** Найденные пары переводов между своими картами (без изменений в базе) */
-export async function findOwnTransferPairs(user: ImportUser) {
-  const [owner, accounts, transactions] = await Promise.all([
+/**
+ * Найденные пары переводов между своими картами (без изменений в базе).
+ * `minStrength` = 2 — только надёжные пары (владелец, номер или банк другой карты, «карта другого банка»),
+ * 1 — плюс обезличенные «Перевод» → «Перевод с карты на карту», которые нужно подтвердить.
+ */
+export async function findOwnTransferPairs(user: ImportUser, minStrength = 2) {
+  const [owners, accounts, transactions] = await Promise.all([
+    // Владелец берётся из всех выписок: в одних банках ФИО есть, в других нет
     prisma.importBatch.findMany({ where: { userId: user.id, status: "APPLIED" }, orderBy: { createdAt: "desc" }, select: { summary: true } })
-      .then(batches => batches.map(b => summaryOf(b).owner).find(Boolean) ?? null),
+      .then(batches => batches.flatMap(b => summaryOf(b).owner ?? [])),
     prisma.account.findMany({ where: { userId: user.id }, select: { id: true, name: true } }),
     prisma.transaction.findMany({
       where: {
         userId: user.id,
         source: "IMPORT",
         scheduledPaymentId: null,
+        notOwnTransfer: false,
         OR: [
           { kind: "EXPENSE", category: { key: { in: TRANSFER_EXPENSE_KEYS } } },
           { kind: "INCOME", category: { key: { in: TRANSFER_INCOME_KEYS } } },
@@ -516,6 +526,11 @@ export async function findOwnTransferPairs(user: ImportUser) {
     }),
   ]);
   const nameOf = (id: string) => accounts.find(a => a.id === id)?.name ?? "";
+  const signalFor = (text: string, otherName: string) =>
+    owners.length === 0
+      ? ownTransferSignal(text, null, otherName)
+      : Math.max(...owners.map(owner => ownTransferSignal(text, owner, otherName)));
+
   const items = transactions.map(t => ({
     id: t.id,
     accountId: t.accountId,
@@ -526,21 +541,77 @@ export async function findOwnTransferPairs(user: ImportUser) {
   }));
   return pairOwnTransfers(
     items,
-    (out, incoming) => Math.max(ownTransferSignal(out.text, owner, nameOf(incoming.accountId)), ownTransferSignal(incoming.text, owner, nameOf(out.accountId))),
-    daysBetween
+    (out, incoming) => Math.max(signalFor(out.text, nameOf(incoming.accountId)), signalFor(incoming.text, nameOf(out.accountId))),
+    daysBetween,
+    minStrength,
   );
 }
 
-/** Разовое связывание переводов по всей истории — отдельной записью, которую можно отменить в настройках */
-export async function relinkAllOwnTransfers(user: ImportUser) {
+export type TransferSuggestion = {
+  outId: string;
+  incomingId: string;
+  amount: number;
+  day: string;
+  fromAccount: string;
+  toAccount: string;
+  note: string;
+};
+
+/** Похоже на перевод между своими картами, но наверняка знает только пользователь */
+export async function listTransferSuggestions(user: ImportUser): Promise<TransferSuggestion[]> {
+  const [pairs, accounts] = await Promise.all([
+    findOwnTransferPairs(user, 1),
+    prisma.account.findMany({ where: { userId: user.id }, select: { id: true, name: true } }),
+  ]);
+  const nameOf = (id: string) => accounts.find(a => a.id === id)?.name ?? "Счёт";
+  return pairs
+    .filter(pair => pair.strength < 2)
+    .map(({ out, incoming }) => ({
+      outId: out.id,
+      incomingId: incoming.id,
+      amount: -out.amount,
+      day: out.day,
+      fromAccount: nameOf(out.accountId),
+      toAccount: nameOf(incoming.accountId),
+      note: out.tx.note?.trim() || "Перевод",
+    }));
+}
+
+/** Пользователь подтвердил пары: расход становится переводом, поступление удаляется */
+export async function linkTransferSuggestions(user: ImportUser, outIds: string[]) {
+  const wanted = new Set(outIds);
+  const pairs = (await findOwnTransferPairs(user, 1)).filter(pair => wanted.has(pair.out.id));
+  if (pairs.length === 0) return 0;
+  const batch = await createRelinkBatch(user);
+  const linked = await applyOwnTransferPairs(pairs, batch.id);
+  if (linked === 0) await prisma.importBatch.delete({ where: { id: batch.id } });
+  return linked;
+}
+
+/** «Это не мои переводы»: больше не предлагать связывать эти операции */
+export async function dismissTransferSuggestions(user: ImportUser, ids: string[]) {
+  const { count } = await prisma.transaction.updateMany({
+    where: { userId: user.id, id: { in: ids } },
+    data: { notOwnTransfer: true },
+  });
+  return count;
+}
+
+/** Запись «Связь переводов между картами» — чтобы связывание можно было отменить в настройках */
+async function createRelinkBatch(user: ImportUser) {
   const account = await getDefaultAccount(user.id);
   const empty: ImportSummary = {
     bank: "RELINK", bankTitle: "Связь переводов между картами", cardMask: null, periodFrom: null, periodTo: null, closingBalance: null,
     total: 0, toImport: 0, alreadyImported: 0, manualDuplicates: 0, skippedOwn: 0, income: 0, expense: 0, needAi: 0, imported: 0,
   };
-  const batch = await prisma.importBatch.create({
+  return prisma.importBatch.create({
     data: { userId: user.id, accountId: account.id, bank: "RELINK", status: "APPLIED", appliedAt: new Date(), rows: [], summary: empty as unknown as Prisma.InputJsonValue },
   });
+}
+
+/** Разовое связывание переводов по всей истории — отдельной записью, которую можно отменить в настройках */
+export async function relinkAllOwnTransfers(user: ImportUser) {
+  const batch = await createRelinkBatch(user);
   const linked = await relinkOwnTransfers(user, batch.id);
   if (linked === 0) await prisma.importBatch.delete({ where: { id: batch.id } });
   return linked;

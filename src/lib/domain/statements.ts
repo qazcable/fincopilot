@@ -365,23 +365,28 @@ export type PairItem = { id: string; accountId: string; amount: number; day: Day
 
 /**
  * Пары уже внесённых операций «расход на одной своей карте — поступление на другой».
- * `signal` оценивает пару: 2 — точно свои (владелец, «свой счёт», номер другой карты), 1 — вероятно
- * («с карты другого банка»), 0 — не связывать. Сильный признак допускает ±3 дня, слабый — ±1.
+ * `signal` оценивает пару (см. ownTransferSignal). Сильный признак допускает ±3 дня, остальные — ±1.
+ * `minStrength` = 2 связывает только надёжные пары, 1 — возвращает и те, что нужно подтвердить.
  */
-export function pairOwnTransfers<T extends PairItem>(items: T[], signal: (out: T, incoming: T) => number, dayDiff: (a: DayKey, b: DayKey) => number) {
+export function pairOwnTransfers<T extends PairItem>(
+  items: T[],
+  signal: (out: T, incoming: T) => number,
+  dayDiff: (a: DayKey, b: DayKey) => number,
+  minStrength = 2,
+) {
   const used = new Set<string>();
-  const pairs: { out: T; incoming: T }[] = [];
+  const pairs: { out: T; incoming: T; strength: number }[] = [];
   const outs = items.filter(i => i.amount < 0).sort((a, b) => a.day.localeCompare(b.day));
   for (const out of outs) {
     const options = items
       .filter(i => i.amount === -out.amount && i.accountId !== out.accountId && !used.has(i.id))
       .map(incoming => ({ incoming, strength: signal(out, incoming), distance: Math.abs(dayDiff(out.day, incoming.day)) }))
-      .filter(o => o.strength > 0 && o.distance <= (o.strength >= 2 ? 3 : 1))
+      .filter(o => o.strength >= minStrength && o.distance <= (o.strength >= 3 ? 3 : 1))
       .sort((a, b) => b.strength - a.strength || a.distance - b.distance);
     const best = options[0];
     if (!best) continue;
     used.add(best.incoming.id);
-    pairs.push({ out, incoming: best.incoming });
+    pairs.push({ out, incoming: best.incoming, strength: best.strength });
   }
   return pairs;
 }
@@ -411,12 +416,42 @@ export function pairTransit<T extends PairItem>(items: T[], dayDiff: (a: DayKey,
   return pairs;
 }
 
-/** Насколько описание операции указывает на перевод между своими картами (см. pairOwnTransfers) */
+/** Имя человека в описании: «Артём В.», «Иванов И.», «Азамат Шаматов» — значит, перевод не себе */
+export function mentionsPerson(text: string) {
+  return /[А-ЯЁ][а-яё]{2,}\s+[А-ЯЁ]([а-яё]{2,}|\.)/.test(text);
+}
+
+// Перевод между картами без получателя-человека: банки пишут это по-разному
+const CARD_TO_CARD = /(с карты на карту|между сво|между счетами|card ?2 ?card|p2p|перевод на карту|пополнение карты|пополнение сч[её]та)/i;
+const BARE_TRANSFER = /^\s*(перевод|пополнение|зачисление|перевод средств)\s*$/i;
+
+// Слова из названия счёта, которые есть у всех: по ним банк не узнать
+const COMMON_ACCOUNT_WORDS = ["банк", "bank", "карта", "карты", "счет", "счёт", "основная", "основной", "депозит", "gold", "платинум", "visa", "mastercard"];
+
+/** Узнаваемые слова из названия счёта: «Банк ЦентрКредит *1153» → «центркредит» */
+function bankWords(accountName: string) {
+  return accountName
+    .replace(/\*\d+/g, " ")
+    .toLowerCase()
+    .split(/[^a-zа-яё0-9]+/i)
+    .filter(word => word.length >= 5 && !COMMON_ACCOUNT_WORDS.includes(word));
+}
+
+/**
+ * Насколько описание указывает на перевод между своими картами (см. pairOwnTransfers):
+ * 3 — точно свой (владелец, «свой счёт», номер или банк другой своей карты),
+ * 2 — «с карты другого банка», 1 — обезличенный перевод с карты на карту (только с подтверждением пользователя),
+ * 0 — не связывать.
+ */
 export function ownTransferSignal(text: string, owner: ParsedStatement["owner"], otherAccountName: string) {
-  if (mentionsOwner(text, owner) || /сво(й|его|ю) (сч[её]т|карт)/i.test(text)) return 2;
+  if (mentionsOwner(text, owner) || /сво(й|его|ю) (сч[её]т|карт)/i.test(text)) return 3;
   const mask = text.match(/\*(\d{4})\b/)?.[1];
-  if (mask && otherAccountName.includes(mask)) return 2;
-  if (/(с|на) карт[уы] другого банка/i.test(text)) return 1;
+  if (mask && otherAccountName.includes(mask)) return 3;
+  // Название банка другой своей карты в описании: «Перевод в Freedom Bank»
+  if (bankWords(otherAccountName).some(word => text.toLowerCase().includes(word))) return 3;
+  if (/(с|на) карт[уы] другого банка/i.test(text)) return 2;
+  // Обезличенный перевод: сам по себе не доказательство, поэтому спрашиваем пользователя
+  if (!mentionsPerson(text) && (CARD_TO_CARD.test(text) || BARE_TRANSFER.test(text))) return 1;
   return 0;
 }
 

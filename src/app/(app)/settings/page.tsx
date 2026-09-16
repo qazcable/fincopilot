@@ -6,11 +6,12 @@ import { BackButton } from "@/components/TelegramBackButton";
 import { AccountsSection, CurrencySection, IncomesSection, PreferencesSection, ShortcutSection } from "@/components/settings/SettingsSections";
 import { getNbkRates } from "@/lib/server/rates";
 import { ImportSection } from "@/components/settings/ImportSection";
-import { listImports } from "@/lib/server/imports";
+import { listImports, listTransferSuggestions } from "@/lib/server/imports";
 import { isOwner, listInvites } from "@/lib/server/access";
 import { FeedbackButton, InvitesSection } from "@/components/settings/CommunitySections";
 import { SubscriptionSection } from "@/components/settings/SubscriptionSection";
 import { CloseAppButton } from "@/components/CloseAppButton";
+import { TransferSuggestions } from "@/components/settings/TransferSuggestions";
 import { subscriptionSummary } from "@/lib/server/plan";
 
 async function appOrigin() {
@@ -22,9 +23,9 @@ async function appOrigin() {
 export default async function SettingsPage() {
   const user = await requireUser();
   const owner = isOwner(user.telegramId);
-  const [data, origin, imports, invites, nbk, plan] = await Promise.all([
+  const [data, origin, imports, invites, nbk, plan, transferSuggestions] = await Promise.all([
     getSettingsData(user), appOrigin(), listImports(user.id), owner ? listInvites(user.id) : Promise.resolve([]), getNbkRates(),
-    subscriptionSummary(user),
+    subscriptionSummary(user), listTransferSuggestions(user),
   ]);
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME;
 
@@ -47,6 +48,7 @@ export default async function SettingsPage() {
         <AccountsSection accounts={data.accounts} />
         <IncomesSection incomes={data.incomes} />
         <CurrencySection currency={user.currency} secondary={user.secondaryCurrency} ratesDate={nbk.date} />
+        <TransferSuggestions suggestions={transferSuggestions} />
         <ImportSection imports={imports} botUsername={botUsername} />
         <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} />
         <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} />

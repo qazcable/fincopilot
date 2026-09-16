@@ -115,3 +115,41 @@ describe("matchOwnTransfers", () => {
     expect(result.size).toBe(0);
   });
 });
+
+describe("ownTransferSignal", () => {
+  const me = { surname: "Шаматов", name: "Азамат" };
+
+  it("владелец в описании — точно свой перевод", () => {
+    expect(ownTransferSignal("Перевод. ФИО: Шаматов Азамат", me, "Kaspi")).toBe(3);
+  });
+
+  it("банк другой своей карты в описании — точно свой", () => {
+    expect(ownTransferSignal("Перевод в Freedom Bank", me, "Freedom Bank *1036")).toBe(3);
+    // Слово «банк» есть у всех — по нему связывать нельзя
+    expect(ownTransferSignal("Перевод с карты другого банка", me, "Банк ЦентрКредит *1153")).toBe(2);
+  });
+
+  it("обезличенный перевод — только предложение пользователю", () => {
+    expect(ownTransferSignal("Перевод", me, "Freedom Bank *1036")).toBe(1);
+    expect(ownTransferSignal("Перевод с карты на карту", me, "Банк ЦентрКредит *1153")).toBe(1);
+  });
+
+  it("перевод человеку не связывается", () => {
+    expect(ownTransferSignal("Артём В.", me, "Freedom Bank *1036")).toBe(0);
+    expect(ownTransferSignal("Перевод Елизавета Абрамова", me, "Kaspi")).toBe(0);
+    expect(ownTransferSignal("Оплата ZAVODSKAYA AZS", me, "Kaspi")).toBe(0);
+  });
+
+  it("обезличенные пары находятся только при minStrength = 1", () => {
+    const items = [
+      { id: "bcc-out", accountId: "bcc", amount: -11_600_000, day: "2026-09-11", text: "Перевод" },
+      { id: "freedom-in", accountId: "freedom", amount: 11_600_000, day: "2026-09-11", text: "Перевод с карты на карту" },
+    ];
+    const names: Record<string, string> = { bcc: "Банк ЦентрКредит *1153", freedom: "Freedom Bank *1036" };
+    const signal = (out: (typeof items)[0], incoming: (typeof items)[0]) =>
+      Math.max(ownTransferSignal(out.text, me, names[incoming.accountId]), ownTransferSignal(incoming.text, me, names[out.accountId]));
+
+    expect(pairOwnTransfers(items, signal, daysBetween)).toEqual([]);
+    expect(pairOwnTransfers(items, signal, daysBetween, 1).map(p => p.out.id)).toEqual(["bcc-out"]);
+  });
+});

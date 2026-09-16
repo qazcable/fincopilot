@@ -11,11 +11,14 @@ import { deleteTransaction } from "./ledger";
 import { markPaymentPaid } from "./payments";
 import { budgetLine, buildMultiReceipt, buildReceipt, escapeHtml, siblingTransactionIds } from "./receipt";
 import { formatMoney, fromDb } from "@/lib/domain/money";
-import { addDays, dayKeyOf, relativeDays, daysBetween } from "@/lib/domain/dates";
+import { addDays, dayKeyOf, formatDayKeyShort, relativeDays, daysBetween } from "@/lib/domain/dates";
 import { formatLimitAlert, isMonday } from "@/lib/domain/digest";
 import { buildEvening, buildLimitsMessage, buildMorning, buildWeekly } from "./digests";
 import { evaluateCategoryLimit } from "./limits";
-import { applyImport, cancelImport, createStatementDraft, rememberMerchantCategory } from "./imports";
+import {
+  applyImport, cancelImport, createStatementDraft, dismissTransferSuggestions, listTransferSuggestions,
+  linkTransferSuggestions, rememberMerchantCategory,
+} from "./imports";
 import { formatImportApplied, formatImportDraft, hasSomethingToImport } from "@/lib/domain/importText";
 import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
 import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
@@ -122,6 +125,30 @@ async function handleGrant(ctx: Context, args: string) {
   const untilText = until?.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) ?? "";
   await ctx.reply(`${authorLine(user)} — Pro на ${months} мес., до ${untilText}. Учтено ${formatMoney(amount * 100)}.`, { parse_mode: "HTML" });
   await notifyPro(ctx, user.telegramId, `Pro подключён 🎉 Действует до ${untilText}. Спасибо, что поддерживаете FinCopilot!`);
+}
+
+/**
+ * После импорта: пары «ушло с одной карты — пришло на другую», где банк не указал получателя.
+ * Сами их не связываем — сначала спрашиваем, иначе можно склеить перевод другу с чужим поступлением.
+ */
+async function offerTransferSuggestions(ctx: Context, user: { id: string; timezone: string }) {
+  const suggestions = await listTransferSuggestions(user).catch(() => []);
+  if (suggestions.length === 0) return;
+
+  const total = suggestions.reduce((sum, s) => sum + s.amount, 0);
+  const lines = [
+    `🔁 Похоже, это переводы между вашими картами — банк не указал получателя:`,
+    "",
+    ...suggestions.slice(0, 8).map(s => `• ${formatDayKeyShort(s.day)} · ${escapeHtml(s.fromAccount)} → ${escapeHtml(s.toAccount)} · <b>${formatMoney(s.amount)}</b>`),
+    ...(suggestions.length > 8 ? [`…и ещё ${suggestions.length - 8}`] : []),
+    "",
+    `Сейчас они считаются и расходом, и доходом — это завышает статистику на <b>${formatMoney(total)}</b>.`,
+    "Связать их в переводы?",
+  ];
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: new InlineKeyboard().text(`✅ Связать ${suggestions.length}`, "tl").text("Это не мои", "td"),
+  });
 }
 
 function notifyPro(ctx: Context, telegramId: bigint, text: string) {
@@ -640,10 +667,37 @@ function registerHandlers(bot: Bot) {
           ? new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`).row().webApp("Открыть историю", `${appUrl()}/history`)
           : new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`),
       });
+      await offerTransferSuggestions(ctx, user);
     } catch (error) {
       console.error("Apply import failed:", errorMessage(error));
       await ctx.editMessageText("Не получилось импортировать 😕 Черновик сохранён — пришлите выписку ещё раз.").catch(() => undefined);
     }
+  });
+
+  // Подтверждение переводов между своими картами после импорта
+  bot.callbackQuery(["tl", "td"], async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const suggestions = await listTransferSuggestions(user);
+    if (suggestions.length === 0) {
+      await ctx.answerCallbackQuery("Уже нечего связывать");
+      await ctx.editMessageReplyMarkup().catch(() => undefined);
+      return;
+    }
+
+    if (ctx.callbackQuery.data === "tl") {
+      const linked = await linkTransferSuggestions(user, suggestions.map(s => s.outId));
+      await ctx.answerCallbackQuery(`Связано: ${linked}`);
+      await ctx.editMessageText(
+        `✅ Связано переводов: <b>${linked}</b> — теперь они не считаются ни расходом, ни доходом.\nОтменить можно в «Настройках» → «Выписки банков».`,
+        { parse_mode: "HTML" },
+      ).catch(() => undefined);
+      return;
+    }
+
+    await dismissTransferSuggestions(user, suggestions.flatMap(s => [s.outId, s.incomingId]));
+    await ctx.answerCallbackQuery("Больше не предложу");
+    await ctx.editMessageText("Понял, это не переводы между своими картами — оставляю как есть.").catch(() => undefined);
   });
 
   bot.callbackQuery(/^i[xu]:(\w+)$/, async ctx => {
