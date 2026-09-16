@@ -27,6 +27,8 @@ export async function POST(req: NextRequest) {
 async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typeof findUserByApiKey>>>) {
   const contentType = req.headers.get("content-type") ?? "";
   let result;
+  // Что именно прислала быстрая команда — видно в логах, если разбор не удался
+  let incoming = "";
 
   if (contentType.includes("application/json")) {
     const body = await req.json().catch(() => null);
@@ -41,8 +43,11 @@ async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typ
         card: typeof body.card === "string" ? body.card : undefined,
       });
     } else if (typeof body?.text === "string") {
+      incoming = `json text (${body.text.length})`;
+      if (!body.text.trim()) return text("Кнопка прислала пустой текст — похоже, диктовка ничего не записала", 422);
       result = await captureText(user, body.text, "SHORTCUT");
     } else {
+      console.log("shortcut: json without text", Object.keys(body ?? {}).join(","));
       return text("Нет текста", 400);
     }
   } else {
@@ -51,10 +56,14 @@ async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typ
     const input = form?.get("text");
     if (audio instanceof File && audio.size > 0) {
       if (audio.size > MAX_AUDIO_BYTES) return text("Запись слишком длинная", 400);
+      incoming = `audio ${audio.type || "?"} (${audio.size} б)`;
       result = await captureAudio(user, Buffer.from(await audio.arrayBuffer()), audio.type || "audio/m4a", "SHORTCUT");
     } else if (typeof input === "string") {
+      incoming = `form text (${input.length})`;
+      if (!input.trim()) return text("Кнопка прислала пустой текст — похоже, диктовка ничего не записала", 422);
       result = await captureText(user, input, "SHORTCUT");
     } else {
+      console.log("shortcut: form without text/audio", [...(form?.keys() ?? [])].join(","), contentType);
       return text("Нет текста или аудио", 400);
     }
   }
@@ -66,7 +75,13 @@ async function handle(req: NextRequest, user: NonNullable<Awaited<ReturnType<typ
       foreign_currency: ["Покупка в валюте — запишется из выписки банка", 200],
       bad_amount: ["Не понял сумму оплаты", 422],
     };
-    const [message, status] = messages[result.reason] ?? ["Не понял 🤔 Скажите, например: «такси тысяча пятьсот»", 422];
+    const fallback: [string, number] = result.reason === "ai_unavailable"
+      ? ["ИИ сейчас недоступен — попробуйте позже", 503]
+      : incoming.startsWith("audio")
+        ? ["Не разобрал запись 🎙 Назовите трату так: «такси тысяча пятьсот»", 422]
+        : ["Не понял 🤔 Скажите, например: «такси тысяча пятьсот»", 422];
+    const [message, status] = messages[result.reason] ?? fallback;
+    console.log("shortcut failed:", result.reason, incoming);
     return text(message, status);
   }
 
