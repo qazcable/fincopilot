@@ -41,6 +41,14 @@ model User {
   // Доступ по приглашению: когда выдан и кто пригласил (владельцы из ALLOWED_TELEGRAM_IDS входят без приглашения)
   accessGrantedAt  DateTime?
   invitedById      String?
+  // Тариф: FREE — с лимитами, PRO — без них. proUntil = null при PRO означает бессрочный доступ (беты и близкие)
+  plan             String   @default("FREE")
+  proUntil         DateTime?
+  // Конец бесплатного пробного периода Pro
+  trialEndsAt      DateTime?
+  // Расход ИИ на бесплатном тарифе: месяц YYYY-MM и число разборов в нём
+  aiMonth          String?
+  aiCount          Int      @default(0)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -59,6 +67,22 @@ model User {
   goals            Goal[]
   advisorMessages  AdvisorMessage[]
   debts            Debt[]
+  payments2        Payment[]
+}
+
+// Оплата подписки: пока принимается переводом на Kaspi и отмечается владельцем вручную
+model Payment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    BigInt
+  months    Int
+  // KASPI | CARD | GIFT
+  method    String   @default("KASPI")
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 // Долг человеку или человека мне: не кредит банка, а «занял у друга» / «дал в долг»

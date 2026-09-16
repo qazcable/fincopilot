@@ -11,6 +11,7 @@ import { MAX_AMOUNT_MINOR, toDb } from "@/lib/domain/money";
 import { ACCOUNT_KINDS } from "@/lib/domain/constants";
 import { isCurrencyCode } from "@/lib/domain/currency";
 import { conversionFactor, convertUserAmounts } from "@/lib/server/currency-convert";
+import { getPlan, startTrial } from "@/lib/server/plan";
 import type { ActionResult } from "./transactions";
 
 const balance = z.number().int().min(-MAX_AMOUNT_MINOR).max(MAX_AMOUNT_MINOR);
@@ -55,6 +56,8 @@ export async function completeOnboarding(input: z.infer<typeof onboardingSchema>
     const currencyData = isCurrencyCode(currency) ? { currency, secondaryCurrency: currency === "KZT" ? "USD" : "KZT" } : {};
     await tx.user.update({ where: { id: user.id }, data: { onboardedAt: new Date(), ...currencyData } });
   });
+  // Первые две недели — полный Pro, чтобы человек увидел все возможности
+  await startTrial(user.id);
   return done();
 }
 
@@ -213,6 +216,7 @@ export async function saveCategoryLimits(input: z.infer<typeof limitsSchema>): P
 
 export async function createShortcutKey(): Promise<{ ok: true; key: string } | { ok: false; error: string }> {
   const user = await requireUser();
+  if (!getPlan(user).pro) return { ok: false, error: "Кнопка на iPhone входит в Pro — подключите подписку выше" };
   const key = await rotateApiKey(user.id);
   revalidatePath("/settings");
   return { ok: true, key };

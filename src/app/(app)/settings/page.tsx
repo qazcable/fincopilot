@@ -9,6 +9,8 @@ import { ImportSection } from "@/components/settings/ImportSection";
 import { listImports } from "@/lib/server/imports";
 import { isOwner, listInvites } from "@/lib/server/access";
 import { FeedbackButton, InvitesSection } from "@/components/settings/CommunitySections";
+import { SubscriptionSection } from "@/components/settings/SubscriptionSection";
+import { subscriptionSummary } from "@/lib/server/plan";
 
 async function appOrigin() {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
@@ -19,8 +21,9 @@ async function appOrigin() {
 export default async function SettingsPage() {
   const user = await requireUser();
   const owner = isOwner(user.telegramId);
-  const [data, origin, imports, invites, nbk] = await Promise.all([
+  const [data, origin, imports, invites, nbk, plan] = await Promise.all([
     getSettingsData(user), appOrigin(), listImports(user.id), owner ? listInvites(user.id) : Promise.resolve([]), getNbkRates(),
+    subscriptionSummary(user),
   ]);
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME;
 
@@ -37,6 +40,7 @@ export default async function SettingsPage() {
             <span className="block text-[13px] text-muted">Как работает каждая функция</span>
           </span>
         </Link>
+        <SubscriptionSection plan={plan} payContact={process.env.PAY_KASPI ?? null} />
         <FeedbackButton />
         {owner && <InvitesSection invites={invites} />}
         <AccountsSection accounts={data.accounts} />

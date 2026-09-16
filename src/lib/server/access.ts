@@ -4,6 +4,7 @@ import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
 import type { TelegramUser } from "./telegram-auth";
 import { hasAccess, isOwner } from "./access-rules";
+import { startTrial } from "./plan";
 
 // Приглашение действует 30 дней
 const INVITE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -46,6 +47,8 @@ export async function redeemInvite(code: string, tgUser: TelegramUser): Promise<
   const { count } = await prisma.invite.updateMany({ where: { id: invite.id, usedById: null }, data: { usedById: user.id, usedAt: new Date() } });
   if (count === 0) return { ok: false, reason: "used" };
   const granted = await prisma.user.update({ where: { id: user.id }, data: { accessGrantedAt: new Date(), invitedById: invite.createdById } });
+  // Новичок сразу получает Pro на пробу — иначе не увидит, за что платить
+  await startTrial(granted.id);
   return { ok: true, user: granted, isNew: !existing, inviterTelegramId: invite.createdBy.telegramId };
 }
 

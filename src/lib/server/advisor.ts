@@ -10,9 +10,14 @@ import { forecastHeadline } from "@/lib/domain/forecast";
 import { getForecast } from "./forecast";
 import { peerSums } from "./peer";
 import { isOwner } from "./access-rules";
+import { planState } from "@/lib/domain/plan";
 import { ACCOUNT_KINDS, NOT_PEER_OUT, NOT_TRANSIT, OBLIGATION_KINDS, PEER_IN_WHERE, netPeer, type AccountKind, type ObligationKind } from "@/lib/domain/constants";
 
-type AdvisorUser = { id: string; timezone: string; cushion: bigint; firstName: string | null; telegramId: bigint };
+type AdvisorUser = {
+  id: string; timezone: string; cushion: bigint; firstName: string | null; telegramId: bigint;
+  // Советник входит в Pro
+  plan: string; proUntil: Date | null; trialEndsAt: Date | null;
+};
 
 // Бережём предоплаченный бюджет Gemini: владельцу больше, приглашённым тестировщикам — меньше
 const OWNER_DAILY_QUESTIONS = 40;
@@ -176,12 +181,13 @@ export async function buildAdvisorContext(user: AdvisorUser) {
 
 export type AdvisorAnswer =
   | { ok: true; answer: string }
-  | { ok: false; reason: "unavailable" | "daily_limit" | "failed" };
+  | { ok: false; reason: "unavailable" | "daily_limit" | "failed" | "pro_only" };
 
 /** Вопрос советнику: сохраняется в общую переписку бота и приложения */
 export async function askAdvisor(user: AdvisorUser, question: string, source: "BOT" | "APP"): Promise<AdvisorAnswer> {
   const text = question.trim().slice(0, 1000);
   if (!isAiConfigured()) return { ok: false, reason: "unavailable" };
+  if (!planState(user).pro) return { ok: false, reason: "pro_only" };
 
   const today = dayKeyOf(new Date(), user.timezone);
   const [askedToday, recent] = await Promise.all([
@@ -224,4 +230,5 @@ export const ADVISOR_ERRORS: Record<Exclude<AdvisorAnswer, { ok: true }>["reason
   unavailable: "Советник сейчас недоступен — не настроен ИИ.",
   daily_limit: "На сегодня вопросы советнику закончились. Продолжим завтра 🙌",
   failed: "Не получилось ответить — ИИ перегружен. Попробуйте через минуту.",
+  pro_only: "Советник входит в Pro. Подключить — «Настройки» → «Подписка» в приложении или команда /subscribe в боте.",
 };

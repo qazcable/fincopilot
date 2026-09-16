@@ -6,6 +6,7 @@ import { markPaymentPaid } from "./payments";
 import { categorizeMerchants, isAiConfigured, parseWithAi } from "./ai";
 import { normalizeMerchant } from "@/lib/domain/kaspi";
 import { rateLimit } from "./rate-limit";
+import { consumeAi } from "./plan";
 import { matchCategoryKey, quickParse } from "@/lib/domain/parse";
 import { accountForCard, parseBankSms, parseWalletAmount } from "@/lib/domain/autocapture";
 import { addDays, dayKeyOf } from "@/lib/domain/dates";
@@ -15,14 +16,22 @@ import { DEBT_CATEGORY_KEY, type TxSource } from "@/lib/domain/constants";
 // Не больше 20 обращений к ИИ в минуту на пользователя
 const AI_LIMIT = { count: 20, windowMs: 60_000 };
 
-type CaptureUser = { id: string; timezone: string; currency?: string };
+type CaptureUser = {
+  id: string;
+  timezone: string;
+  currency?: string;
+  // Тариф: на бесплатном разборов ИИ ограниченное число в месяц
+  plan: string;
+  proUntil: Date | null;
+  trialEndsAt: Date | null;
+};
 
 export type CapturedItem = { transactionId: string; linkedPaymentTitle: string | null };
 
 // Одно сообщение может содержать несколько операций — все записываются
 export type CaptureResult =
   | { ok: true; items: CapturedItem[] }
-  | { ok: false; reason: "not_understood" | "ai_unavailable" | "rate_limited" };
+  | { ok: false; reason: "not_understood" | "ai_unavailable" | "rate_limited" | "plan_limit" };
 
 type Parsed = { amount: number; kind: "EXPENSE" | "INCOME"; categoryId: string | null; note: string };
 
@@ -178,6 +187,7 @@ export async function captureText(user: CaptureUser, text: string, source: TxSou
 
   if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
+  if (!(await consumeAi(user))) return { ok: false, reason: "plan_limit" };
   return saveAll(user, await parseWithAi({ text: input }, await aiCategories(user.id)), source, input);
 }
 
@@ -186,6 +196,7 @@ const SPOKEN_AMOUNT = /(тысяч|полтор|сотн|двест|трист|�
 export async function captureAudio(user: CaptureUser, audio: Buffer, mimeType: string, source: TxSource): Promise<CaptureResult> {
   if (!isAiConfigured()) return { ok: false, reason: "ai_unavailable" };
   if (!rateLimit(`ai:${user.id}`, AI_LIMIT.count, AI_LIMIT.windowMs)) return { ok: false, reason: "rate_limited" };
+  if (!(await consumeAi(user))) return { ok: false, reason: "plan_limit" };
   // Метка делает исходный текст уникальным: по нему бот собирает операции одного голосового в общий список
   const rawInput = `🎙 голосовое сообщение · ${randomBytes(4).toString("hex")}`;
   return saveAll(user, await parseWithAi({ audio, mimeType }, await aiCategories(user.id)), source, rawInput);

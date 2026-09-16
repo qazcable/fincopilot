@@ -39,6 +39,7 @@ await call("setMyCommands", {
     { command: "advice", description: "Разбор финансов от ИИ-советника" },
     { command: "guide", description: "Инструкция: как всё работает" },
     { command: "rates", description: "Курс валют Нацбанка" },
+    { command: "subscribe", description: "Тариф и подписка Pro" },
     { command: "feedback", description: "Отзыв или идея" },
     { command: "help", description: "Как записывать траты" },
   ],

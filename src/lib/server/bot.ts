@@ -2,7 +2,9 @@ import "server-only";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { prisma } from "./prisma";
 import { upsertTelegramUser } from "./auth";
-import { hasAccess, isOwner, redeemInvite } from "./access";
+import { hasAccess, isOwner, ownerTelegramIds, redeemInvite } from "./access";
+import { canImport, grantPro, grantProForever, revokePro } from "./plan";
+import { FREE_LIMITS, PRICE, planLabel, planState } from "@/lib/domain/plan";
 import { FEEDBACK_PROMPT, authorLine, feedbackRecipients, saveFeedback } from "./feedback";
 import { captureAudio, captureText, type CaptureResult, type CapturedItem } from "./capture";
 import { deleteTransaction } from "./ledger";
@@ -76,6 +78,56 @@ async function userFromContext(ctx: Context) {
   return null;
 }
 
+/** Куда платить: задаётся переменной PAY_KASPI, иначе — связаться с владельцем */
+async function payInstructions() {
+  const kaspi = process.env.PAY_KASPI;
+  if (kaspi) return `Оплата: переведите на Kaspi <b>${escapeHtml(kaspi)}</b> и пришлите чек сюда — включу Pro в тот же день.`;
+  const owners = ownerTelegramIds().map(id => BigInt(id));
+  const owner = owners.length > 0
+    ? await prisma.user.findFirst({ where: { telegramId: { in: owners }, username: { not: null } }, select: { username: true } })
+    : null;
+  return owner?.username
+    ? `Оплата: напишите @${escapeHtml(owner.username)} — подскажет, куда перевести, и включит Pro.`
+    : "Оплата: напишите владельцу бота — он включит Pro.";
+}
+
+/** Владелец включает Pro: /pro @ник 12 · /pro @ник навсегда · /pro @ник стоп */
+async function handleGrant(ctx: Context, args: string) {
+  const [target, term = "1"] = args.split(/\s+/);
+  const handle = target.replace(/^@/, "");
+  const user = await prisma.user.findFirst({
+    where: /^\d+$/.test(handle) ? { telegramId: BigInt(handle) } : { username: { equals: handle, mode: "insensitive" } },
+  });
+  if (!user) {
+    await ctx.reply(`Не нашёл пользователя ${target}. Нужен ник в Telegram или числовой id.`);
+    return;
+  }
+
+  if (/^(стоп|off)$/i.test(term)) {
+    await revokePro(user.id);
+    await ctx.reply(`${authorLine(user)} — тариф снова бесплатный.`, { parse_mode: "HTML" });
+    return;
+  }
+
+  if (/^(навсегда|forever)$/i.test(term)) {
+    await grantProForever(user.id, "выдано владельцем");
+    await ctx.reply(`${authorLine(user)} — Pro без ограничения по сроку 🎉`, { parse_mode: "HTML" });
+    await notifyPro(ctx, user.telegramId, "Pro подключён без ограничения по сроку 🎉");
+    return;
+  }
+
+  const months = Math.min(36, Math.max(1, Math.round(Number(term)) || 1));
+  const amount = months % 12 === 0 ? PRICE.yearly * (months / 12) : PRICE.monthly * months;
+  const until = await grantPro(user.id, months, { amount, method: "KASPI" });
+  const untilText = until?.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) ?? "";
+  await ctx.reply(`${authorLine(user)} — Pro на ${months} мес., до ${untilText}. Учтено ${formatMoney(amount * 100)}.`, { parse_mode: "HTML" });
+  await notifyPro(ctx, user.telegramId, `Pro подключён 🎉 Действует до ${untilText}. Спасибо, что поддерживаете FinCopilot!`);
+}
+
+function notifyPro(ctx: Context, telegramId: bigint, text: string) {
+  return ctx.api.sendMessage(String(telegramId), text).catch(() => undefined);
+}
+
 function guideMenuKeyboard() {
   const keyboard = new InlineKeyboard();
   GUIDE_TOPICS.forEach((topic, index) => {
@@ -122,6 +174,7 @@ async function replyWithCapture(ctx: Context, user: { id: string; timezone: stri
       ai_unavailable: "Не понял сумму. Напишите, например: <code>кофе 1200</code>",
       rate_limited: "Слишком много сообщений подряд — подождите минуту.",
       not_understood: "Не получилось разобрать 🤔\nПопробуйте так: <code>такси 1500</code> или <code>+250000 зарплата</code>",
+      plan_limit: `На бесплатном тарифе ${FREE_LIMITS.aiPerMonth} разборов голосом и текстом в месяц — они закончились.\nВ приложении записывать можно без ограничений, а Pro снимает лимит: /subscribe`,
     }[result.reason];
     await ctx.reply(text, { parse_mode: "HTML" });
     return;
@@ -392,6 +445,37 @@ function registerHandlers(bot: Bot) {
     await ctx.editMessageText(guideTopicHtml(topic), { parse_mode: "HTML", reply_markup: keyboard }).catch(() => undefined);
   });
 
+  bot.command(["subscribe", "pro", "plan"], async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+
+    // Владелец выдаёт Pro: /pro @ник 12 | /pro @ник навсегда | /pro @ник стоп
+    const args = ctx.match?.trim();
+    if (args && isOwner(ctx.from!.id)) {
+      await handleGrant(ctx, args);
+      return;
+    }
+
+    const state = planState(user);
+    const lines = [
+      `<b>Ваш тариф: ${escapeHtml(planLabel(state))}</b>`,
+      "",
+      "<b>Pro</b> — всё без ограничений:",
+      "• голос и текст без лимита, несколько трат одним сообщением",
+      "• выписки всех банков сколько угодно раз",
+      "• ИИ-советник по вашим деньгам",
+      "• кнопка на iPhone, Apple Pay и SMS банка",
+      "• прогноз остатка, цели, мультивалюта",
+      "",
+      `Бесплатный тариф: ${FREE_LIMITS.aiPerMonth} разборов ИИ в месяц и одна выписка. Ручной ввод в приложении — всегда без ограничений.`,
+      "",
+      `<b>${PRICE.monthly.toLocaleString("ru-RU")} ${PRICE.currency}</b> в месяц или <b>${PRICE.yearly.toLocaleString("ru-RU")} ${PRICE.currency}</b> в год (выгоднее на 28%).`,
+      "",
+      await payInstructions(),
+    ];
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: openAppKeyboard("Открыть FinCopilot") });
+  });
+
   bot.command("feedback", async ctx => {
     const user = await userFromContext(ctx);
     if (!user) return;
@@ -507,6 +591,16 @@ function registerHandlers(bot: Bot) {
           "📸 Остатка долга в выписке нет. Пришлите скриншот списка кредитов из Kaspi (раздел «Мои кредиты») — я подставлю остаток сам.",
         ];
         await edit(lines.join("\n"), new InlineKeyboard().text(`✅ Добавить ${formatMoney(loans.totalMonthly)} · ${loans.dueDay}-е`, `lo:${loans.totalMonthly}:${loans.dueDay}`));
+        return;
+      }
+
+      if (!(await canImport(user))) {
+        await edit([
+          "На бесплатном тарифе можно загрузить одну выписку — она уже загружена.",
+          "",
+          "Pro снимает ограничение: все выписки всех банков, безлимитный голосовой ввод и ИИ-советник.",
+          "Сколько стоит и как подключить — /subscribe",
+        ].join("\n"));
         return;
       }
 
