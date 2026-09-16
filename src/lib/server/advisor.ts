@@ -37,7 +37,7 @@ export async function buildAdvisorContext(user: AdvisorUser) {
   const monthStarts = [-3, -2, -1, 0].map(delta => addMonths(year, month, delta));
   const since30 = startOfDayInstant(dayKeyOf(new Date(Date.now() - 30 * 86_400_000), user.timezone), user.timezone);
 
-  const [monthly, limits, merchants, obligations, incomes] = await Promise.all([
+  const [monthly, limits, merchants, obligations, incomes, debts] = await Promise.all([
     Promise.all(monthStarts.map(async m => {
       const range = monthRange(m.year, m.month, user.timezone);
       const [sums, peer] = await Promise.all([
@@ -63,6 +63,7 @@ export async function buildAdvisorContext(user: AdvisorUser) {
     }),
     prisma.obligation.findMany({ where: { userId: user.id, completedAt: null }, orderBy: { dueDay: "asc" } }),
     prisma.recurringIncome.findMany({ where: { userId: user.id }, orderBy: { dayOfMonth: "asc" } }),
+    prisma.debt.findMany({ where: { userId: user.id, settledAt: null }, orderBy: { dueOn: "asc" } }),
   ]);
 
   const lines: string[] = [];
@@ -137,6 +138,18 @@ export async function buildAdvisorContext(user: AdvisorUser) {
   const upcoming = snapshot.pendingPayments.filter(p => p.dueOn < snapshot.horizon);
   if (upcoming.length > 0) {
     lines.push(`Платежи до следующего дохода: ${upcoming.map(p => `${p.title} ${money(p.amount)} (${formatDayKey(p.dueOn)})`).join("; ")}`);
+  }
+
+  if (debts.length > 0) {
+    // Долги людям не проходят по счетам, пока их не вернули — модель должна знать о них отдельно
+    lines.push("", "ДОЛГИ ЛЮДЯМ (не банковские, деньги ещё не возвращены)");
+    for (const d of debts) {
+      const side = d.direction === "OUT" ? "я должен" : "мне должны";
+      lines.push(`• ${d.person}: ${side} ${money(fromDb(d.amount))}${d.dueOn ? `, вернуть до ${formatDayKey(d.dueOn)}` : ", срок не назначен"}${d.note ? ` (${d.note})` : ""}`);
+    }
+    const owe = debts.filter(d => d.direction === "OUT").reduce((s, d) => s + fromDb(d.amount), 0);
+    const owed = debts.filter(d => d.direction === "IN").reduce((s, d) => s + fromDb(d.amount), 0);
+    lines.push(`Итого: я должен ${money(owe)}, мне должны ${money(owed)}.`);
   }
 
   const forecast = await getForecast(user);

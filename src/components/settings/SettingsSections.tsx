@@ -307,9 +307,9 @@ export function CurrencySection({ currency, secondary, ratesDate }: { currency: 
   const [confirm, setConfirm] = useState<string | null>(null);
   const { pending, error, run } = useAction();
 
-  function save(next: { currency: string; secondary: string | null }) {
+  function save(next: { currency: string; secondary: string | null }, convert = false) {
     setValue(next);
-    run(() => saveCurrency(next));
+    run(() => saveCurrency({ ...next, convert }));
   }
 
   return (
@@ -356,12 +356,32 @@ export function CurrencySection({ currency, secondary, ratesDate }: { currency: 
         {confirm && (
           <div className="space-y-4">
             <p className="text-[15px] leading-snug text-muted">
-              Все суммы будут показываться в {CURRENCIES[confirm as CurrencyCode].short}. Уже внесённые суммы <b className="text-fg">не пересчитываются</b> — меняется только валюта в подписях. Удобно, если вы только начинаете учёт.
+              Все суммы будут показываться в {CURRENCIES[confirm as CurrencyCode].short}. Выберите, что сделать с уже внесёнными суммами.
             </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" size="lg" onClick={() => setConfirm(null)}>Отмена</Button>
-              <Button size="lg" onClick={() => { save({ currency: confirm, secondary: value.secondary === confirm ? null : value.secondary }); setConfirm(null); }}>Сменить</Button>
-            </div>
+            <Button
+              size="lg"
+              className="w-full"
+              loading={pending}
+              onClick={() => { save({ currency: confirm, secondary: value.secondary === confirm ? null : value.secondary }, true); setConfirm(null); }}
+            >
+              Пересчитать по курсу Нацбанка
+            </Button>
+            <p className="-mt-2 px-1 text-[12px] leading-snug text-faint">
+              Операции, балансы счетов, кредиты, цели и лимиты будут пересчитаны по официальному курсу на сегодня.
+            </p>
+            <Button
+              variant="secondary"
+              size="lg"
+              className="w-full"
+              loading={pending}
+              onClick={() => { save({ currency: confirm, secondary: value.secondary === confirm ? null : value.secondary }); setConfirm(null); }}
+            >
+              Только сменить значок
+            </Button>
+            <p className="-mt-2 px-1 text-[12px] leading-snug text-faint">
+              Цифры останутся прежними — подойдёт, если вы вводили суммы уже в новой валюте.
+            </p>
+            <Button variant="ghost" size="md" className="w-full" onClick={() => setConfirm(null)}>Отмена</Button>
           </div>
         )}
       </Sheet>

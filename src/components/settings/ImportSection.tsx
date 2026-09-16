@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import clsx from "clsx";
 import { FileText } from "lucide-react";
 import { SectionHeader } from "../ui/primitives";
-import { cancelImportAction } from "@/lib/actions/imports";
+import { cancelImportAction, forgetImportAction } from "@/lib/actions/imports";
 import { formatDayKeyShort } from "@/lib/domain/dates";
 import { haptic } from "@/lib/client/telegram";
 
@@ -61,6 +61,16 @@ function ImportRow({ item }: { item: ImportItem }) {
           {cancelled ? "Отменён" : `${item.imported} операций`}{error ? ` · ${error}` : ""}
         </span>
       </span>
+      {cancelled && (
+        <button
+          type="button"
+          onClick={() => start(async () => { const r = await forgetImportAction(item.id); if (r.ok) haptic.success(); else setError(r.error); })}
+          disabled={pending}
+          className="pressable rounded-full px-3 py-1.5 text-[13px] font-medium text-muted disabled:opacity-50"
+        >
+          {pending ? "…" : "Убрать"}
+        </button>
+      )}
       {!cancelled && (
         confirm ? (
           <span className="flex gap-1.5">

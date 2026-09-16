@@ -186,7 +186,7 @@ export async function getPaymentsData(user: AppUser) {
   await ensureSchedule(user);
   const today = dayKeyOf(new Date(), user.timezone);
 
-  const [obligations, pending, snapshot] = await Promise.all([
+  const [obligations, pending, snapshot, debts] = await Promise.all([
     prisma.obligation.findMany({
       where: { userId: user.id },
       orderBy: [{ completedAt: "asc" }, { dueDay: "asc" }],
@@ -197,11 +197,21 @@ export async function getPaymentsData(user: AppUser) {
       orderBy: { dueOn: "asc" },
     }),
     getBudgetSnapshot(user),
+    prisma.debt.findMany({ where: { userId: user.id }, orderBy: [{ settledAt: "asc" }, { dueOn: "asc" }, { createdAt: "desc" }] }),
   ]);
 
   return {
     today,
     horizon: snapshot.horizon,
+    debts: debts.map(d => ({
+      id: d.id,
+      person: d.person,
+      direction: d.direction as "OUT" | "IN",
+      amount: fromDb(d.amount),
+      dueOn: d.dueOn,
+      note: d.note,
+      settled: d.settledAt !== null,
+    })),
     hasIncomeSchedule: snapshot.hasIncomeSchedule,
     reserved: snapshot.budget.reserved,
     pending: pending.map(p => ({ id: p.id, dueOn: p.dueOn, amount: fromDb(p.amount), title: p.obligation.title, kind: p.obligation.kind })),

@@ -10,6 +10,7 @@ import { isValidTimeZone } from "@/lib/domain/dates";
 import { MAX_AMOUNT_MINOR, toDb } from "@/lib/domain/money";
 import { ACCOUNT_KINDS } from "@/lib/domain/constants";
 import { isCurrencyCode } from "@/lib/domain/currency";
+import { conversionFactor, convertUserAmounts } from "@/lib/server/currency-convert";
 import type { ActionResult } from "./transactions";
 
 const balance = z.number().int().min(-MAX_AMOUNT_MINOR).max(MAX_AMOUNT_MINOR);
@@ -166,11 +167,18 @@ export async function savePreferences(input: z.infer<typeof preferencesSchema>):
 }
 
 /** Основная валюта учёта и валюта для пересчёта. Суммы не конвертируются — меняются только подписи */
-export async function saveCurrency(input: { currency: string; secondary: string | null }): Promise<ActionResult> {
+export async function saveCurrency(input: { currency: string; secondary: string | null; convert?: boolean }): Promise<ActionResult> {
   const user = await requireUser();
   const currency = String(input?.currency);
   const secondary = input?.secondary == null ? null : String(input.secondary);
   if (!isCurrencyCode(currency) || (secondary !== null && !isCurrencyCode(secondary))) return { ok: false, error: "Неизвестная валюта" };
+
+  // Пересчёт уже внесённых сумм по курсу Нацбанка — по желанию пользователя
+  if (input?.convert && isCurrencyCode(user.currency) && user.currency !== currency) {
+    const factor = await conversionFactor(user.currency, currency);
+    if (factor === null) return { ok: false, error: "Нет курса Нацбанка для этой пары валют — попробуйте позже" };
+    await convertUserAmounts(user.id, factor);
+  }
   await prisma.user.update({ where: { id: user.id }, data: { currency, secondaryCurrency: secondary === currency ? null : secondary } });
   return done();
 }

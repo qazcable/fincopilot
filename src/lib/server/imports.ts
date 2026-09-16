@@ -706,6 +706,12 @@ export async function rememberMerchantCategory(userId: string, transactionId: st
   });
 }
 
+/** Убирает запись об отменённом импорте из списка (операции уже удалены при отмене) */
+export async function forgetImport(userId: string, batchId: string) {
+  const { count } = await prisma.importBatch.deleteMany({ where: { id: batchId, userId, status: "CANCELLED" } });
+  return count > 0;
+}
+
 export async function listImports(userId: string) {
   const batches = await prisma.importBatch.findMany({
     where: { userId, status: { in: ["APPLIED", "CANCELLED"] } },

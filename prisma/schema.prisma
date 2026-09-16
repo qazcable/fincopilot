@@ -58,6 +58,26 @@ model User {
   merchants        MerchantCategory[]
   goals            Goal[]
   advisorMessages  AdvisorMessage[]
+  debts            Debt[]
+}
+
+// Долг человеку или человека мне: не кредит банка, а «занял у друга» / «дал в долг»
+model Debt {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Имя человека
+  person    String
+  // OUT — я должен, IN — мне должны
+  direction String
+  amount    BigInt
+  // Локальная дата возврата (YYYY-MM-DD), если договорились
+  dueOn     String?
+  note      String?
+  settledAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, settledAt])
 }
 
 // Одноразовое приглашение: ссылка t.me/<бот>?start=inv_<code>

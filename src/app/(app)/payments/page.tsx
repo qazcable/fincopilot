@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/server/auth";
 import { getPaymentsData } from "@/lib/server/queries";
 import { PaymentRow } from "@/components/PaymentRow";
 import { DebtStrategy } from "@/components/PayoffCalculator";
+import { DebtsBoard } from "@/components/DebtsBoard";
 import { Card, CategoryIcon, EmptyState, Money, PageHeader, SectionHeader } from "@/components/ui/primitives";
 import { formatDayKey, plural } from "@/lib/domain/dates";
 import { OBLIGATION_KINDS, type ObligationKind } from "@/lib/domain/constants";
@@ -125,6 +126,8 @@ export default async function PaymentsPage() {
             </section>
           </>
         )}
+
+        <DebtsBoard debts={data.debts} today={data.today} />
       </div>
     </main>
   );
