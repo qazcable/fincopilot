@@ -6,7 +6,7 @@ import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { TransactionList } from "@/components/TransactionList";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
 import { Card, EmptyState, Money, PageHeader } from "@/components/ui/primitives";
-import { dayKeyOf, parseKey } from "@/lib/domain/dates";
+import { dayKeyOf, formatDayKey, isDayKey, parseKey, weekdayOf } from "@/lib/domain/dates";
 
 const FILTERS = [
   { value: "all", label: "Все" },
@@ -14,7 +14,7 @@ const FILTERS = [
   { value: "income", label: "Доходы" },
 ] as const;
 
-export default async function HistoryPage({ searchParams }: { searchParams: Promise<{ month?: string; kind?: string }> }) {
+export default async function HistoryPage({ searchParams }: { searchParams: Promise<{ month?: string; kind?: string; day?: string }> }) {
   const user = await requireUser();
   const params = await searchParams;
   const { year, month } = parseMonthParam(params.month, user.timezone);
@@ -22,8 +22,11 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   const current = parseKey(today);
   const filter = FILTERS.find(f => f.value === params.kind)?.value ?? "all";
 
+  // Фильтр по дню — переход со столбика в аналитике
+  const day = params.day && isDayKey(params.day) ? params.day : null;
   const history = await getHistory(user, year, month);
-  const items = filter === "all" ? history.items : history.items.filter(t => t.kind === (filter === "expense" ? "EXPENSE" : "INCOME"));
+  const byKind = filter === "all" ? history.items : history.items.filter(t => t.kind === (filter === "expense" ? "EXPENSE" : "INCOME"));
+  const items = day ? byKind.filter(t => t.dayKey === day) : byKind;
   const monthQuery = `month=${year}-${String(month).padStart(2, "0")}`;
 
   return (
@@ -43,11 +46,22 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
           </Card>
         </div>
 
+        {day && (
+          <Link
+            href={`/history?${monthQuery}${filter !== "all" ? `&kind=${filter}` : ""}`}
+            replace
+            className="pressable flex items-center justify-between gap-2 rounded-2xl bg-accent-soft px-4 py-3 text-[14px] font-medium text-accent"
+          >
+            <span>{formatDayKey(day, today)}, {weekdayOf(day)}</span>
+            <span className="text-[13px]">Показать весь месяц ✕</span>
+          </Link>
+        )}
+
         <div className="flex gap-2">
           {FILTERS.map(f => (
             <Link
               key={f.value}
-              href={`/history?${monthQuery}${f.value !== "all" ? `&kind=${f.value}` : ""}`}
+              href={`/history?${monthQuery}${f.value !== "all" ? `&kind=${f.value}` : ""}${day ? `&day=${day}` : ""}`}
               replace
               className={clsx(
                 "pressable rounded-full px-4 py-2 text-[14px] font-medium",

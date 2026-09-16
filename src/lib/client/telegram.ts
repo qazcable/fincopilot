@@ -9,6 +9,7 @@ export type TelegramWebApp = {
   version: string;
   ready: () => void;
   expand: () => void;
+  close: () => void;
   disableVerticalSwipes?: () => void;
   isVersionAtLeast: (version: string) => boolean;
   setHeaderColor: (color: string) => void;
@@ -41,6 +42,14 @@ export function getWebApp(): TelegramWebApp | null {
   const webApp = window.Telegram?.WebApp;
   // Скрипт telegram-web-app.js создаёт объект и вне Telegram — отличаем по initData
   return webApp && webApp.initData ? webApp : null;
+}
+
+/** Закрывает Mini App. Вне Telegram — ничего не делает */
+export function closeApp() {
+  const webApp = getWebApp();
+  if (!webApp) return false;
+  webApp.close();
+  return true;
 }
 
 export const haptic = {

@@ -10,6 +10,7 @@ import { listImports } from "@/lib/server/imports";
 import { isOwner, listInvites } from "@/lib/server/access";
 import { FeedbackButton, InvitesSection } from "@/components/settings/CommunitySections";
 import { SubscriptionSection } from "@/components/settings/SubscriptionSection";
+import { CloseAppButton } from "@/components/CloseAppButton";
 import { subscriptionSummary } from "@/lib/server/plan";
 
 async function appOrigin() {
@@ -49,6 +50,8 @@ export default async function SettingsPage() {
         <ImportSection imports={imports} botUsername={botUsername} />
         <PreferencesSection cushion={data.cushion} timezone={data.timezone} remindersEnabled={data.remindersEnabled} morningDigest={data.morningDigest} eveningDigest={data.eveningDigest} weeklyDigest={data.weeklyDigest} />
         <ShortcutSection apiKeyHint={data.apiKeyHint} endpoint={`${origin}/api/shortcut`} />
+
+        <CloseAppButton variant="row" />
 
         {botUsername && (
           <p className="pb-4 text-center text-[13px] text-muted">

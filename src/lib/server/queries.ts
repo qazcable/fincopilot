@@ -182,6 +182,49 @@ export async function getStats(user: AppUser, year: number, month: number) {
   };
 }
 
+/** Детализация одной категории за месяц: операции, куда уходило и сравнение с прошлым месяцем */
+export async function getCategoryStats(user: AppUser, year: number, month: number, categoryId: string) {
+  const current = monthRange(year, month, user.timezone);
+  const prev = addMonths(year, month, -1);
+  const previous = monthRange(prev.year, prev.month, user.timezone);
+  // «none» — операции без категории
+  const sameCategory = categoryId === "none" ? { categoryId: null } : { categoryId };
+
+  const [transactions, previousSum, category] = await Promise.all([
+    loadTransactions(user.id, { occurredAt: { gte: current.from, lt: current.to }, ...sameCategory }),
+    prisma.transaction.aggregate({
+      where: { userId: user.id, kind: "EXPENSE", occurredAt: { gte: previous.from, lt: previous.to }, ...sameCategory, ...NOT_TRANSIT },
+      _sum: { amount: true },
+    }),
+    categoryId === "none" ? Promise.resolve(null) : prisma.category.findFirst({ where: { id: categoryId, userId: user.id } }),
+  ]);
+  if (categoryId !== "none" && !category) return null;
+
+  const items = transactions.map(tx => toTransactionDto(tx, user.timezone)).filter(t => t.kind === "EXPENSE" && !t.transit);
+
+  // Куда именно уходили деньги внутри категории: одинаковые описания собираются вместе
+  const byMerchant = new Map<string, { note: string; total: number; count: number }>();
+  for (const tx of items) {
+    const note = tx.note?.trim() || "Без описания";
+    const key = note.toLowerCase();
+    const entry = byMerchant.get(key) ?? { note, total: 0, count: 0 };
+    entry.total += tx.amount;
+    entry.count++;
+    byMerchant.set(key, entry);
+  }
+
+  const total = items.reduce((sum, t) => sum + t.amount, 0);
+  return {
+    category: category && { id: category.id, name: category.name, emoji: category.emoji, color: category.color, monthlyLimit: fromDb(category.monthlyLimit) || null },
+    items,
+    total,
+    count: items.length,
+    previousTotal: fromDb(previousSum._sum.amount),
+    merchants: [...byMerchant.values()].sort((a, b) => b.total - a.total),
+    today: dayKeyOf(new Date(), user.timezone),
+  };
+}
+
 export async function getPaymentsData(user: AppUser) {
   await ensureSchedule(user);
   const today = dayKeyOf(new Date(), user.timezone);

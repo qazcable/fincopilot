@@ -1,11 +1,13 @@
+import Link from "next/link";
 import clsx from "clsx";
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp } from "lucide-react";
 import { requireUser } from "@/lib/server/auth";
 import { getStats, parseMonthParam } from "@/lib/server/queries";
 import { getLimitsOverview } from "@/lib/server/limits";
 import { LimitsCard } from "@/components/LimitsCard";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { Donut } from "@/components/Donut";
+import { DayBars } from "@/components/DayBars";
 import { ApproxMoney } from "@/components/CurrencyProvider";
 import { Card, CategoryIcon, EmptyState, Money, PageHeader } from "@/components/ui/primitives";
 import { daysInMonth, makeKey, monthName, parseKey } from "@/lib/domain/dates";
@@ -22,7 +24,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
     const key = makeKey(year, month, i + 1);
     return { key, day: i + 1, value: stats.byDay[key] ?? 0, future: key > stats.today };
   });
-  const maxDay = Math.max(1, ...dayValues.map(d => d.value));
+  const monthQuery = `month=${year}-${String(month).padStart(2, "0")}`;
   const elapsedDays = year === current.year && month === current.month ? current.day : days;
   const averagePerDay = Math.round(stats.expense / Math.max(1, elapsedDays));
 
@@ -43,7 +45,12 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
         ) : (
           <>
             <Card className="p-5">
-              <Donut segments={stats.categories.map(c => ({ value: c.total, color: c.category?.color ?? "#A1A1AA" }))}>
+              <Donut segments={stats.categories.map(c => ({
+                value: c.total,
+                color: c.category?.color ?? "#A1A1AA",
+                label: c.category?.name ?? "Без категории",
+                href: `/stats/${c.category?.id ?? "none"}?${monthQuery}`,
+              }))}>
                 <span className="text-[13px] text-muted">Потрачено</span>
                 <Money value={stats.expense} className="text-[22px] font-bold tracking-tight" />
                 <ApproxMoney value={stats.expense} />
@@ -78,28 +85,18 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
             </Card>
 
             <Card className="p-5">
-              <h2 className="text-[15px] font-semibold">По дням</h2>
-              <div className="mt-4 flex h-28 items-end gap-[3px]" role="img" aria-label="Расходы по дням месяца">
-                {dayValues.map(d => (
-                  <div key={d.key} className="flex h-full flex-1 flex-col justify-end">
-                    <div
-                      className={clsx("w-full rounded-t-[3px]", d.key === stats.today ? "bg-accent" : d.value > 0 ? "bg-accent/45" : d.future ? "bg-transparent" : "bg-surface-2")}
-                      style={{ height: d.value > 0 ? `${Math.max(4, (d.value / maxDay) * 100)}%` : "3px" }}
-                      title={`${d.day}`}
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 flex justify-between text-[11px] text-faint tabular">
-                <span>1</span><span>{Math.ceil(days / 2)}</span><span>{days}</span>
-              </div>
+              <DayBars days={dayValues} today={stats.today} monthQuery={monthQuery} />
             </Card>
 
             <Card className="p-2">
               {stats.categories.map(entry => {
                 const share = Math.round((entry.total / stats.expense) * 100);
                 return (
-                  <div key={entry.category?.id ?? "none"} className="flex items-center gap-3 px-3 py-2.5">
+                  <Link
+                    key={entry.category?.id ?? "none"}
+                    href={`/stats/${entry.category?.id ?? "none"}?${monthQuery}`}
+                    className="pressable flex items-center gap-3 px-3 py-2.5"
+                  >
                     <CategoryIcon emoji={entry.category?.emoji ?? "💸"} color={entry.category?.color ?? "#A1A1AA"} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline justify-between gap-2">
@@ -113,7 +110,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
                         <span className="tabular w-9 text-right text-[12px] text-muted">{share}%</span>
                       </div>
                     </div>
-                  </div>
+                    <ChevronRight className="size-4 shrink-0 text-faint" />
+                  </Link>
                 );
               })}
             </Card>

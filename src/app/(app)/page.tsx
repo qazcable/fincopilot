@@ -16,6 +16,7 @@ import { ApproxMoney } from "@/components/CurrencyProvider";
 import { getNbkRates } from "@/lib/server/rates";
 import { CURRENCIES, isCurrencyCode } from "@/lib/domain/currency";
 import { AddFirstTransaction } from "@/components/AddFirstTransaction";
+import { CloseAppButton } from "@/components/CloseAppButton";
 import { Card, EmptyState, Money, SectionHeader } from "@/components/ui/primitives";
 import { capitalize, formatDayKey, plural, weekdayOf } from "@/lib/domain/dates";
 
@@ -58,6 +59,7 @@ export default async function HomePage() {
           <Link href="/settings" aria-label="Настройки" className="pressable flex size-11 items-center justify-center rounded-full bg-surface text-muted shadow-card">
             <Settings className="size-5" />
           </Link>
+          <CloseAppButton />
         </div>
       </header>
 

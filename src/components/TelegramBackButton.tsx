@@ -6,6 +6,10 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { getWebApp } from "@/lib/client/telegram";
 
+// Сколько экранов сейчас просят кнопку «Назад»: при переходе между ними новый экран монтируется раньше,
+// чем размонтируется старый, поэтому прятать кнопку можно только когда её не просит никто
+let requested = 0;
+
 /** Нативная кнопка «Назад» Telegram; вне Telegram — обычная ссылка */
 export function BackButton({ href, label }: { href: string; label: string }) {
   const router = useRouter();
@@ -14,11 +18,13 @@ export function BackButton({ href, label }: { href: string; label: string }) {
     const backButton = getWebApp()?.BackButton;
     if (!backButton) return;
     const onClick = () => router.push(href);
+    requested++;
     backButton.show();
     backButton.onClick(onClick);
     return () => {
       backButton.offClick(onClick);
-      backButton.hide();
+      requested--;
+      if (requested === 0) backButton.hide();
     };
   }, [href, router]);
 
