@@ -91,5 +91,5 @@ export async function buildReceipt(user: ReceiptUser, transactionId: string, lin
   ].filter(line => line !== null);
 
   const html = lines.join("\n");
-  return { html, plain: stripHtml(html), transaction: tx };
+  return { html, plain: stripHtml(html), transaction: tx, limitLevel: limit?.newLevel ?? null };
 }

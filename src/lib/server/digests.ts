@@ -71,7 +71,7 @@ export async function buildMorning(user: DigestUser): Promise<BotMessage & { pay
   }
 
   const keyboard = new InlineKeyboard();
-  for (const payment of due) keyboard.text(`✅ ${payment.title} — ${formatMoney(payment.amount)}`, `q:${payment.id}`).row();
+  for (const payment of due) keyboard.text(`✅ ${payment.title} — ${formatMoney(payment.amount)}`, `q:${payment.id}`).style("success").row();
   return { text, keyboard: due.length ? keyboard : undefined, paymentIds: due.map(p => p.id) };
 }
 

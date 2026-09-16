@@ -21,7 +21,10 @@ import {
 } from "./imports";
 import { formatImportApplied, formatImportDraft, hasSomethingToImport } from "@/lib/domain/importText";
 import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
-import { ADVICE_REVIEW_PROMPT, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
+import { ADVICE_REVIEW_PROMPT, ADVISOR_SUGGESTIONS, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
+import {
+  ASK_HINT_HTML, KB, RECORD_HINT_HTML, STRANGER_HTML, expandable, h, isKeyboardText, lines, mainKeyboard, muted, quote, react, withEffect,
+} from "./botui";
 import { GUIDE_INTRO_HTML, GUIDE_TOPICS, guideTopic, guideTopicHtml } from "@/lib/domain/guide";
 import { runWithCurrency } from "./currency-context";
 import { getNbkRates } from "./rates";
@@ -68,7 +71,14 @@ function openAppKeyboard(label = "Открыть FinCopilot") {
 }
 
 function receiptKeyboard(transactionId: string) {
-  return new InlineKeyboard().text("🏷 Категория", `k:${transactionId}`).text("↩️ Отменить", `u:${transactionId}`);
+  return new InlineKeyboard().text("🏷 Категория", `k:${transactionId}`).text("↩️ Отменить", `u:${transactionId}`).style("danger");
+}
+
+/** Готовые вопросы советнику под кнопкой «💬 Спросить» */
+function suggestionsKeyboard() {
+  const keyboard = new InlineKeyboard();
+  ADVISOR_SUGGESTIONS.slice(0, 4).forEach((question, index) => keyboard.text(question, `as:${index}`).row());
+  return keyboard;
 }
 
 async function userFromContext(ctx: Context) {
@@ -77,7 +87,7 @@ async function userFromContext(ctx: Context) {
   if (existing && hasAccess(existing)) return existing;
   if (isOwner(ctx.from.id)) return existing ?? upsertTelegramUser(ctx.from);
   // Посторонних не заводим в базе — только ответ
-  await ctx.reply("Это закрытый бот 🔒 Доступ — по приглашению. Попросите ссылку у того, кто вас позвал.");
+  await ctx.reply(STRANGER_HTML, { parse_mode: "HTML" });
   return null;
 }
 
@@ -147,7 +157,7 @@ async function offerTransferSuggestions(ctx: Context, user: { id: string; timezo
   ];
   await ctx.reply(lines.join("\n"), {
     parse_mode: "HTML",
-    reply_markup: new InlineKeyboard().text(`✅ Связать ${suggestions.length}`, "tl").text("Это не мои", "td"),
+    reply_markup: new InlineKeyboard().text(`✅ Связать ${suggestions.length}`, "tl").style("success").text("Это не мои", "td"),
   });
 }
 
@@ -195,18 +205,25 @@ async function acceptFeedback(ctx: Context, user: NonNullable<Awaited<ReturnType
   await ctx.reply("Спасибо! 🙏 Отзыв получен — это правда помогает сделать FinCopilot лучше.");
 }
 
-async function replyWithCapture(ctx: Context, user: { id: string; timezone: string; cushion: bigint }, result: CaptureResult) {
+const CAPTURE_ERRORS: Record<Extract<CaptureResult, { ok: false }>["reason"], string> = {
+  ai_unavailable: lines("Не разобрал сумму.", "Напишите так: <code>кофе 1200</code>"),
+  rate_limited: "Слишком много сообщений подряд — подождите минуту.",
+  not_understood: lines("Не разобрал, что записать.", "Попробуйте так: <code>такси 1500</code> или <code>+250000 зарплата</code>"),
+  plan_limit: lines(
+    `На бесплатном тарифе — ${FREE_LIMITS.aiPerMonth} записей голосом и текстом в месяц, они закончились.`,
+    muted("В приложении записывать можно без ограничений, а Pro снимает лимит: /subscribe"),
+  ),
+};
+
+async function replyWithCapture(ctx: Context, user: ReceiptUser, result: CaptureResult) {
   if (!result.ok) {
-    const text = {
-      ai_unavailable: "Не понял сумму. Напишите, например: <code>кофе 1200</code>",
-      rate_limited: "Слишком много сообщений подряд — подождите минуту.",
-      not_understood: "Не получилось разобрать 🤔\nПопробуйте так: <code>такси 1500</code> или <code>+250000 зарплата</code>",
-      plan_limit: `На бесплатном тарифе ${FREE_LIMITS.aiPerMonth} разборов голосом и текстом в месяц — они закончились.\nВ приложении записывать можно без ограничений, а Pro снимает лимит: /subscribe`,
-    }[result.reason];
-    await ctx.reply(text, { parse_mode: "HTML" });
+    if (result.reason === "not_understood" || result.reason === "ai_unavailable") await react(ctx, "🤔");
+    await ctx.reply(CAPTURE_ERRORS[result.reason], { parse_mode: "HTML" });
     return;
   }
-  await sendReceipts(ctx.api, String(ctx.chat!.id), user, result.items);
+  const sent = await sendReceipts(ctx.api, String(ctx.chat!.id), user, result.items);
+  // Реакция на сообщение человека: «записал» — и сразу видно, что это было
+  await react(ctx, sent.limitHit ? "🙈" : result.items.length > 1 ? "👌" : sent.kind === "INCOME" ? "🔥" : "✍");
 }
 
 type ReceiptUser = { id: string; timezone: string; cushion: bigint };
@@ -228,10 +245,11 @@ export async function sendReceipts(api: Bot["api"], chatId: string, user: Receip
   if (items.length === 1) {
     const receipt = await buildReceipt(user, items[0].transactionId, items[0].linkedPaymentTitle);
     if (receipt) await api.sendMessage(chatId, receipt.html, { parse_mode: "HTML", reply_markup: receiptKeyboard(items[0].transactionId) });
-    return;
+    return { limitHit: receipt?.limitLevel === 100, kind: receipt?.transaction.kind ?? null };
   }
   const view = await multiReceiptView(user, items.map(i => i.transactionId));
   await api.sendMessage(chatId, view.html, { parse_mode: "HTML", reply_markup: view.keyboard });
+  return { limitHit: false, kind: null };
 }
 
 async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>[0], question: string) {
@@ -273,7 +291,9 @@ function registerHandlers(bot: Bot) {
         return;
       }
       if (result.inviterTelegramId) {
-        await ctx.api.sendMessage(String(result.inviterTelegramId), `🎉 ${authorLine(result.user)} принял(а) приглашение в FinCopilot`, { parse_mode: "HTML" }).catch(() => undefined);
+        const inviterChat = String(result.inviterTelegramId);
+        await withEffect("confetti", extra => ctx.api.sendMessage(inviterChat, `🎉 ${authorLine(result.user)} принял(а) ваше приглашение в FinCopilot`, { parse_mode: "HTML", ...extra }))
+          .catch(() => undefined);
       }
     }
 
@@ -286,6 +306,21 @@ function registerHandlers(bot: Bot) {
         chat_id: ctx.chat.id,
         menu_button: { type: "web_app", text: "Финансы", web_app: { url } },
       }).catch(() => undefined);
+    }
+
+    // Уже настроен — короткое «с возвращением» и нижняя клавиатура
+    if (user.onboardedAt) {
+      await ctx.reply(
+        lines(
+          `С возвращением${user.firstName ? `, ${escapeHtml(user.firstName)}` : ""} 👋`,
+          "",
+          await budgetLine(user),
+          "",
+          muted("Пишите траты сюда или голосом. Приложение — кнопка «Финансы» слева от поля ввода."),
+        ),
+        { parse_mode: "HTML", reply_markup: mainKeyboard() },
+      );
+      return;
     }
 
     const keyboard = new InlineKeyboard().text("📖 Как пользоваться — инструкция", "g:new").row();
@@ -321,19 +356,42 @@ function registerHandlers(bot: Bot) {
     await ctx.reply(GUIDE_INTRO_HTML, { parse_mode: "HTML", reply_markup: guideMenuKeyboard() });
   });
 
-  bot.command(["today", "budget"], async ctx => {
+  async function runToday(ctx: Context) {
     const user = await userFromContext(ctx);
     if (!user) return;
     const morning = await buildMorning(user);
     await ctx.reply(morning.text, { parse_mode: "HTML", reply_markup: morning.keyboard ?? openAppKeyboard("Подробнее") });
-  });
+  }
 
-  bot.command("week", async ctx => {
+  async function runWeek(ctx: Context) {
     const user = await userFromContext(ctx);
     if (!user) return;
     const today = dayKeyOf(new Date(), user.timezone);
     const weekly = await buildWeekly(user, { from: addDays(today, -6), to: today });
     await ctx.reply(weekly.text, { parse_mode: "HTML", reply_markup: openAppKeyboard("Аналитика") });
+  }
+
+  bot.command(["today", "budget"], runToday);
+  bot.command("week", runWeek);
+
+  // Нижняя клавиатура — раньше разбора текста, иначе «💸 Сегодня» стало бы тратой
+  bot.hears(KB.today, runToday);
+  bot.hears(KB.week, runWeek);
+  bot.hears(KB.record, async ctx => {
+    if (!(await userFromContext(ctx))) return;
+    await ctx.reply(RECORD_HINT_HTML, { parse_mode: "HTML" });
+  });
+  bot.hears(KB.ask, async ctx => {
+    if (!(await userFromContext(ctx))) return;
+    await ctx.reply(ASK_HINT_HTML, { parse_mode: "HTML", reply_markup: suggestionsKeyboard() });
+  });
+
+  bot.callbackQuery(/^as:(\d)$/, async ctx => {
+    const user = await userFromContext(ctx);
+    if (!user) return;
+    const question = ADVISOR_SUGGESTIONS[Number(ctx.match[1])];
+    await ctx.answerCallbackQuery();
+    if (question) await replyWithAdvice(ctx, user, question);
   });
 
   bot.command("limits", async ctx => {
@@ -343,9 +401,28 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.command("help", ctx => ctx.reply(
-    "📖 Подробная инструкция по каждой функции — /guide\n\n" +
-    "Пишите траты в свободной форме: <code>обед 2500</code>, <code>1 500 такси</code>. Доход — с плюсом: <code>+100000 аванс</code>.\nПод каждой записью есть кнопки, чтобы поменять категорию или отменить.\n\n/today — лимит на сегодня\n/week — траты за 7 дней\n/limits — лимиты по категориям\n/advice — разбор финансов от советника\n\n💬 Вопрос советнику — просто напишите с «?»: <i>успею накопить на цель?</i>\n\n📄 Пришлите PDF-выписку Kaspi Gold, Банк ЦентрКредит, Freedom или Alatau City Bank — импортирую операции без дублей, а переводы между своими картами свяжу.\n\nУтренние и вечерние итоги включаются и выключаются в приложении: Настройки → Бюджет.\n\n🧪 /feedback — отзыв или идея: что неудобно, что сломалось, чего не хватает.",
-    { parse_mode: "HTML" }
+    lines(
+      "✍️ " + h("Записывайте как удобно"),
+      "<code>обед 2500</code> · <code>1 500 такси</code> · доход с плюсом: <code>+100000 аванс</code>",
+      "Голосом — можно сразу несколько трат. Под записью — кнопки категории и отмены.",
+      "",
+      "💬 Вопрос советнику — просто напишите с «?»: " + muted("успею накопить на цель?"),
+      "📄 PDF-выписка Kaspi Gold, БЦК, Freedom или Alatau — импортирую без дублей.",
+      "",
+      h("Команды"),
+      expandable(lines(
+        "/today — сколько можно потратить сегодня",
+        "/week — траты за 7 дней",
+        "/limits — лимиты по категориям",
+        "/advice — разбор месяца от советника",
+        "/rates — курс Нацбанка",
+        "/subscribe — тариф и Pro",
+        "/guide — подробная инструкция",
+        "/feedback — отзыв или идея",
+      )),
+      muted("Утренние и вечерние итоги включаются в приложении: Настройки → Бюджет."),
+    ),
+    { parse_mode: "HTML", reply_markup: mainKeyboard() },
   ));
 
   // 🏦 Кредиты Kaspi из выписки: общий платёж и день
@@ -418,7 +495,7 @@ function registerHandlers(bot: Bot) {
     ];
     await ctx.reply(lines.join("\n"), {
       parse_mode: "HTML",
-      reply_markup: new InlineKeyboard().text(`✅ Сохранить остаток ${formatMoney(remaining)}`, `lr:${remaining}:${monthly ?? ""}:${dueDay ?? ""}`),
+      reply_markup: new InlineKeyboard().text(`✅ Сохранить остаток ${formatMoney(remaining)}`, `lr:${remaining}:${monthly ?? ""}:${dueDay ?? ""}`).style("success"),
     });
   });
 
@@ -484,23 +561,28 @@ function registerHandlers(bot: Bot) {
     }
 
     const state = planState(user);
-    const lines = [
-      `<b>Ваш тариф: ${escapeHtml(planLabel(state))}</b>`,
+    const text = lines(
+      "✨ " + h(`Ваш тариф: ${escapeHtml(planLabel(state))}`),
       "",
-      "<b>Pro</b> — всё без ограничений:",
-      "• голос и текст без лимита, несколько трат одним сообщением",
-      "• выписки всех банков сколько угодно раз",
-      "• ИИ-советник по вашим деньгам",
-      "• кнопка на iPhone, Apple Pay и SMS банка",
-      "• прогноз остатка, цели, мультивалюта",
-      "",
-      `Бесплатный тариф: ${FREE_LIMITS.aiPerMonth} разборов ИИ в месяц и одна выписка. Ручной ввод в приложении — всегда без ограничений.`,
-      "",
-      `<b>${PRICE.monthly.toLocaleString("ru-RU")} ${PRICE.currency}</b> в месяц или <b>${PRICE.yearly.toLocaleString("ru-RU")} ${PRICE.currency}</b> в год (выгоднее на 28%).`,
+      h("Pro — всё без ограничений"),
+      quote(lines(
+        "голос и текст без лимита, несколько трат за раз",
+        "выписки всех банков сколько угодно",
+        "ИИ-советник по вашим деньгам",
+        "кнопка на iPhone, Apple Pay и SMS банка",
+        "прогноз остатка, цели, мультивалюта",
+      )),
+      `${h(`${PRICE.monthly.toLocaleString("ru-RU")} ${PRICE.currency}`)} в месяц · ${h(`${PRICE.yearly.toLocaleString("ru-RU")} ${PRICE.currency}`)} в год — выгоднее на 28%`,
       "",
       await payInstructions(),
-    ];
-    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: openAppKeyboard("Открыть FinCopilot") });
+      "",
+      muted(`Бесплатно навсегда: ${FREE_LIMITS.aiPerMonth} записей ИИ в месяц, одна выписка и ручной ввод без ограничений.`),
+    );
+    const url = appUrl();
+    await ctx.reply(text, {
+      parse_mode: "HTML",
+      reply_markup: url ? new InlineKeyboard().webApp("Открыть FinCopilot", url).style("primary") : undefined,
+    });
   });
 
   bot.command("feedback", async ctx => {
@@ -534,7 +616,7 @@ function registerHandlers(bot: Bot) {
   });
 
   bot.on("message:text", async ctx => {
-    if (ctx.message.text.startsWith("/")) return;
+    if (ctx.message.text.startsWith("/") || isKeyboardText(ctx.message.text)) return;
     const user = await userFromContext(ctx);
     if (!user) return;
     const text = ctx.message.text;
@@ -542,6 +624,8 @@ function registerHandlers(bot: Bot) {
       await replyWithAdvice(ctx, user, text);
       return;
     }
+    // Мгновенный знак «вижу» — пока разбираем текст
+    await react(ctx, "👀");
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     const result = await captureText(user, text, "BOT_TEXT");
     // Не трата и без цифр, но похоже на фразу — отвечает советник
@@ -559,6 +643,7 @@ function registerHandlers(bot: Bot) {
       await ctx.reply("Голосовое слишком длинное — хватит пары секунд: «такси тысяча пятьсот».");
       return;
     }
+    await react(ctx, "👀");
     await ctx.replyWithChatAction("typing").catch(() => undefined);
 
     const file = await ctx.getFile();
@@ -617,7 +702,7 @@ function registerHandlers(bot: Bot) {
           "",
           "📸 Остатка долга в выписке нет. Пришлите скриншот списка кредитов из Kaspi (раздел «Мои кредиты») — я подставлю остаток сам.",
         ];
-        await edit(lines.join("\n"), new InlineKeyboard().text(`✅ Добавить ${formatMoney(loans.totalMonthly)} · ${loans.dueDay}-е`, `lo:${loans.totalMonthly}:${loans.dueDay}`));
+        await edit(lines.join("\n"), new InlineKeyboard().text(`✅ Добавить ${formatMoney(loans.totalMonthly)} · ${loans.dueDay}-е`, `lo:${loans.totalMonthly}:${loans.dueDay}`).style("success"));
         return;
       }
 
@@ -641,7 +726,7 @@ function registerHandlers(bot: Bot) {
       }
       const count = result.summary.toImport + (result.summary.ownTransfers ?? 0);
       const keyboard = hasSomethingToImport(result.summary)
-        ? new InlineKeyboard().text(`✅ Импортировать ${count}`, `ia:${result.batchId}`).text("Отмена", `ix:${result.batchId}`)
+        ? new InlineKeyboard().text(`✅ Импортировать ${count}`, `ia:${result.batchId}`).style("success").text("Отмена", `ix:${result.batchId}`)
         : undefined;
       await edit(formatImportDraft(result.summary), keyboard);
     } catch (error) {
@@ -664,8 +749,8 @@ function registerHandlers(bot: Bot) {
       await ctx.editMessageText(formatImportApplied(result.summary), {
         parse_mode: "HTML",
         reply_markup: appUrl()
-          ? new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`).row().webApp("Открыть историю", `${appUrl()}/history`)
-          : new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`),
+          ? new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`).style("danger").row().webApp("Открыть историю", `${appUrl()}/history`)
+          : new InlineKeyboard().text("↩️ Отменить импорт", `iu:${ctx.match[1]}`).style("danger"),
       });
       await offerTransferSuggestions(ctx, user);
     } catch (error) {
@@ -883,11 +968,14 @@ export async function notifyReferralReward(referrerTelegramId: bigint, days: num
   if (!isBotConfigured()) return;
   try {
     const bot = await getBot();
-    await bot.api.sendMessage(
+    await withEffect("confetti", extra => bot.api.sendMessage(
       String(referrerTelegramId),
-      `🎉 Друг настроил FinCopilot по вашей ссылке — вам начислено +${days} ${plural(days, "день", "дня", "дней")} Pro`,
-      { parse_mode: "HTML", reply_markup: openAppKeyboard("Открыть FinCopilot") }
-    );
+      lines(
+        "🎉 " + h(`+${days} ${plural(days, "день", "дня", "дней")} Pro — в подарок`),
+        "Друг настроил FinCopilot по вашей ссылке. Спасибо, что делитесь!",
+      ),
+      { parse_mode: "HTML", reply_markup: openAppKeyboard("Открыть FinCopilot"), ...extra },
+    ));
   } catch (error) {
     console.error("Referral reward notify failed:", errorMessage(error));
   }
@@ -910,7 +998,7 @@ async function sendPaymentReminders(bot: Bot, user: ScheduledUser) {
     const text = `${diff < 0 ? "⚠️" : "🔔"} <b>${escapeHtml(payment.obligation.title)}</b> — ${formatMoney(fromDb(payment.amount))}\nПлатёж ${relativeDays(diff)}`;
     await bot.api.sendMessage(String(user.telegramId), text, {
       parse_mode: "HTML",
-      reply_markup: new InlineKeyboard().text("✅ Оплачено", `p:${payment.id}`),
+      reply_markup: new InlineKeyboard().text("✅ Оплачено", `p:${payment.id}`).style("success"),
     });
     await prisma.scheduledPayment.update({ where: { id: payment.id }, data: { remindedAt: new Date() } });
     sent++;
