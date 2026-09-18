@@ -15,7 +15,8 @@
     "bot:webhook": "node scripts/set-webhook.mjs",
     "postinstall": "prisma skills sync || exit 0",
     "bot:profile": "node scripts/bot-profile.mjs",
-    "bot:commands": "node scripts/set-commands.mjs"
+    "bot:commands": "node scripts/set-commands.mjs",
+    "bot:updates": "node scripts/set-allowed-updates.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",

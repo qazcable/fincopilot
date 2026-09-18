@@ -46,6 +46,8 @@ model User {
   botOnboardingData Json?
   // Первая запись отпразднована (конфетти) — один раз за всё время
   firstCaptureCelebratedAt DateTime?
+  // Пользователь нажал «Стоп» на этом id черновика ответа советника — стрим проверяет совпадение
+  advisorStoppedDraftId    Int?
   // sha256 от ключа для Apple Shortcuts; сам ключ показывается один раз
   apiKeyHash       String?  @unique
   apiKeyHint       String?

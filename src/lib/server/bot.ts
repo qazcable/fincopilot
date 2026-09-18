@@ -26,7 +26,7 @@ import {
   linkTransferSuggestions, rememberMerchantCategory,
 } from "./imports";
 import { formatImportApplied, formatImportDraft, hasSomethingToImport } from "@/lib/domain/importText";
-import { ADVISOR_ERRORS, askAdvisor } from "./advisor";
+import { ADVISOR_ERRORS, askAdvisor, streamAdvisor } from "./advisor";
 import { ADVICE_REVIEW_PROMPT, ADVISOR_SUGGESTIONS, adviceToTelegramHtml, looksLikeQuestion } from "@/lib/domain/advisor";
 import {
   ASK_HINT_HTML, KB, RECORD_HINT_HTML, STRANGER_HTML, expandable, h, isKeyboardText, lines, mainKeyboard, muted, quote, react, withEffect,
@@ -317,19 +317,63 @@ export async function sendReceipts(api: Bot["api"], chatId: string, user: Receip
   return { limitHit: false, kind: null };
 }
 
+const DRAFT_MIN_INTERVAL_MS = 700;
+// Черновик живёт 30 с — если размышления идут дольше, обновляем его же текстом, чтобы не истёк
+const DRAFT_KEEP_ALIVE_MS = 8000;
+
 async function replyWithAdvice(ctx: Context, user: Parameters<typeof askAdvisor>[0], question: string) {
+  const chatId = ctx.chat!.id;
+  const url = appUrl();
+  const draftId = 1 + Math.floor(Math.random() * 2_000_000_000);
+
+  // «Печатает на глазах»: обновляем один и тот же черновик, пока не пришлём настоящее сообщение
+  let draftsOk = true;
+  let lastText = "";
+  let lastSentAt = 0;
+  async function sendDraft(text: string) {
+    if (!draftsOk) return;
+    try {
+      await ctx.api.sendMessageDraft(chatId, draftId, text ? `💬 ${adviceToTelegramHtml(text)}` : "", { parse_mode: "HTML", can_stop: true });
+      lastSentAt = Date.now();
+    } catch {
+      // Черновики недоступны в этой версии клиента — тихо переходим на обычное «печатает…»
+      draftsOk = false;
+    }
+  }
+
+  await sendDraft("");
   await ctx.replyWithChatAction("typing").catch(() => undefined);
-  // Ответ с размышлениями может занять десяток секунд — «печатает» гаснет через 5 с
   const typing = setInterval(() => ctx.replyWithChatAction("typing").catch(() => undefined), 4500);
+  const keepAlive = setInterval(() => {
+    if (draftsOk && Date.now() - lastSentAt > DRAFT_KEEP_ALIVE_MS) sendDraft(lastText);
+  }, 4000);
+
   try {
-    const result = await askAdvisor(user, question, "BOT");
-    const url = appUrl();
-    await ctx.reply(result.ok ? `💬 ${adviceToTelegramHtml(result.answer)}` : ADVISOR_ERRORS[result.reason], {
-      parse_mode: "HTML",
-      reply_markup: url ? new InlineKeyboard().webApp("Продолжить в приложении", `${url}/advisor`) : undefined,
+    const result = await streamAdvisor(user, question, "BOT", {
+      onText: async full => {
+        lastText = full;
+        if (draftsOk && Date.now() - lastSentAt >= DRAFT_MIN_INTERVAL_MS) await sendDraft(full);
+      },
+      shouldStop: async () => {
+        // Кнопка «Стоп» приходит отдельным апдейтом — возможно, на другой инстанс, поэтому через базу
+        const fresh = await prisma.user.findUnique({ where: { id: user.id }, select: { advisorStoppedDraftId: true } });
+        return fresh?.advisorStoppedDraftId === draftId;
+      },
     });
+
+    const keyboard = new InlineKeyboard();
+    if (result.ok && url) keyboard.webApp("Продолжить в приложении", `${url}/advisor`).row();
+    if (result.ok) {
+      const suggestionIndex = ADVISOR_SUGGESTIONS.findIndex(q => q !== question);
+      if (suggestionIndex >= 0) keyboard.text(`💡 ${shortLabel(ADVISOR_SUGGESTIONS[suggestionIndex], 40)}`, `as:${suggestionIndex}`);
+    }
+    const text = result.ok
+      ? `💬 ${adviceToTelegramHtml(result.answer)}${result.stopped ? muted("\n\n⏹ Остановлено") : ""}`
+      : ADVISOR_ERRORS[result.reason];
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard.inline_keyboard.length ? keyboard : undefined });
   } finally {
     clearInterval(typing);
+    clearInterval(keepAlive);
   }
 }
 
@@ -344,6 +388,16 @@ function registerHandlers(bot: Bot) {
 
   // Настройка в чате: её ответы перехватываются раньше записи трат
   registerOnboarding(bot, onboardingHelpers);
+
+  // Кнопка «Стоп» у черновика ответа советника — отдельный тип апдейта, может прийти на другой инстанс
+  bot.on("stopped_message_generation", async ctx => {
+    const update = ctx.update.stopped_message_generation;
+    if (!update) return;
+    await prisma.user.updateMany({
+      where: { telegramId: BigInt(update.chat.id) },
+      data: { advisorStoppedDraftId: update.draft_id },
+    }).catch(() => undefined);
+  });
 
   bot.command("start", async ctx => {
     // Вход по приглашению: t.me/<бот>?start=inv_<code>

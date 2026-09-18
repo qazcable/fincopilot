@@ -30,7 +30,7 @@ async function call(method, body) {
 }
 
 const url = `${appUrl.replace(/\/$/, "")}/api/telegram/webhook`;
-await call("setWebhook", { url, secret_token: secret, allowed_updates: ["message", "callback_query"], drop_pending_updates: true });
+await call("setWebhook", { url, secret_token: secret, allowed_updates: ["message", "callback_query", "stopped_message_generation"], drop_pending_updates: true });
 await call("setMyCommands", {
   commands: [
     { command: "today", description: "Сколько можно потратить сегодня" },

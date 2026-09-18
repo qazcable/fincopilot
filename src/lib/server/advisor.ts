@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "./prisma";
 import { getBudgetSnapshot } from "./overview";
 import { getLimitsOverview } from "./limits";
-import { askAdvisorAi, isAiConfigured, type AdvisorTurn } from "./ai";
+import { askAdvisorAi, isAiConfigured, streamAdvisorAi, type AdvisorTurn } from "./ai";
 import { addMonths, dayKeyOf, daysInMonth, formatDayKey, monthName, monthRange, parseKey, startOfDayInstant, weekdayOf } from "@/lib/domain/dates";
 import { formatMoney, fromDb } from "@/lib/domain/money";
 import { simulatePayoff } from "@/lib/domain/payoff";
@@ -183,8 +183,12 @@ export type AdvisorAnswer =
   | { ok: true; answer: string }
   | { ok: false; reason: "unavailable" | "daily_limit" | "failed" | "pro_only" };
 
-/** Вопрос советнику: сохраняется в общую переписку бота и приложения */
-export async function askAdvisor(user: AdvisorUser, question: string, source: "BOT" | "APP"): Promise<AdvisorAnswer> {
+type PreparedTurn =
+  | { ok: true; text: string; context: string; history: AdvisorTurn[] }
+  | { ok: false; reason: Exclude<AdvisorAnswer, { ok: true }>["reason"] };
+
+/** Общая часть вопроса и потокового ответа: проверки, суточный лимит, история переписки и сводка */
+async function prepareAdvisorTurn(user: AdvisorUser, question: string): Promise<PreparedTurn> {
   const text = question.trim().slice(0, 1000);
   if (!isAiConfigured()) return { ok: false, reason: "unavailable" };
   if (!planState(user).pro) return { ok: false, reason: "pro_only" };
@@ -204,19 +208,71 @@ export async function askAdvisor(user: AdvisorUser, question: string, source: "B
   // Переписка должна начинаться с вопроса пользователя
   while (history[0]?.role === "assistant") history.shift();
 
+  const context = await buildAdvisorContext(user);
+  return { ok: true, text, context, history };
+}
+
+function saveAdvisorTurn(userId: string, question: string, answer: string, source: "BOT" | "APP") {
+  return prisma.advisorMessage.createMany({
+    data: [
+      { userId, role: "user", text: question, source },
+      { userId, role: "assistant", text: answer.slice(0, 8000), source },
+    ],
+  });
+}
+
+/** Вопрос советнику: сохраняется в общую переписку бота и приложения */
+export async function askAdvisor(user: AdvisorUser, question: string, source: "BOT" | "APP"): Promise<AdvisorAnswer> {
+  const prepared = await prepareAdvisorTurn(user, question);
+  if (!prepared.ok) return prepared;
   try {
-    const context = await buildAdvisorContext(user);
-    const answer = await askAdvisorAi(context, history, text);
+    const answer = await askAdvisorAi(prepared.context, prepared.history, prepared.text);
     if (!answer) return { ok: false, reason: "failed" };
-    await prisma.advisorMessage.createMany({
-      data: [
-        { userId: user.id, role: "user", text, source },
-        { userId: user.id, role: "assistant", text: answer.slice(0, 8000), source },
-      ],
-    });
+    await saveAdvisorTurn(user.id, prepared.text, answer, source);
     return { ok: true, answer };
   } catch (error) {
     console.error("Advisor failed:", error instanceof Error ? error.message : String(error));
+    return { ok: false, reason: "failed" };
+  }
+}
+
+/**
+ * То же самое потоком — для «печатает на глазах» в боте.
+ * `onText` получает накопленный текст по мере поступления; `shouldStop` проверяется между кусками.
+ * При остановке частичный ответ всё равно сохраняется (с пометкой), чтобы не потерять контекст переписки.
+ */
+export async function streamAdvisor(
+  user: AdvisorUser,
+  question: string,
+  source: "BOT" | "APP",
+  options: { onText: (full: string) => void | Promise<void>; shouldStop?: () => Promise<boolean> },
+): Promise<AdvisorAnswer & { stopped?: boolean }> {
+  const prepared = await prepareAdvisorTurn(user, question);
+  if (!prepared.ok) return prepared;
+
+  const controller = new AbortController();
+  let full = "";
+  let stopped = false;
+  try {
+    for await (const chunk of streamAdvisorAi(prepared.context, prepared.history, prepared.text, controller.signal)) {
+      full = chunk;
+      await options.onText(full);
+      if (options.shouldStop && (await options.shouldStop())) {
+        stopped = true;
+        controller.abort();
+        break;
+      }
+    }
+    if (!full) return { ok: false, reason: "failed" };
+    await saveAdvisorTurn(user.id, prepared.text, stopped ? `${full}…` : full, source);
+    return { ok: true, answer: full, stopped };
+  } catch (error) {
+    if (full) {
+      // Хоть что-то получили до сбоя связи — не терять ответ
+      await saveAdvisorTurn(user.id, prepared.text, `${full}…`, source);
+      return { ok: true, answer: full, stopped: true };
+    }
+    console.error("Advisor stream failed:", error instanceof Error ? error.message : String(error));
     return { ok: false, reason: "failed" };
   }
 }

@@ -123,22 +123,42 @@ const advisorInstruction = (currency: CurrencyCode) => `Ты — личный ф
 
 export type AdvisorTurn = { role: "user" | "assistant"; text: string };
 
+function advisorRequest(context: string, history: AdvisorTurn[], question: string) {
+  return {
+    model: MODEL,
+    contents: [
+      ...history.map(turn => ({ role: turn.role === "assistant" ? "model" : "user", parts: [{ text: turn.text }] })),
+      { role: "user", parts: [{ text: `ДАННЫЕ:\n${context}\n\nВОПРОС:\n${question}` }] },
+    ],
+    // Советы требуют рассуждений — здесь размышления средние, а не минимальные
+    config: { systemInstruction: advisorInstruction(currentCurrency()), thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }, maxOutputTokens: 8192 },
+  };
+}
+
 /** Ответ советника: сводка финансов + недавняя переписка + вопрос */
 export async function askAdvisorAi(context: string, history: AdvisorTurn[], question: string): Promise<string | null> {
   const ai = getClient();
   if (!ai) return null;
-
-  const contents = [
-    ...history.map(turn => ({ role: turn.role === "assistant" ? "model" : "user", parts: [{ text: turn.text }] })),
-    { role: "user", parts: [{ text: `ДАННЫЕ:\n${context}\n\nВОПРОС:\n${question}` }] },
-  ];
-  const response = await withRetry(() => ai.models.generateContent({
-    model: MODEL,
-    contents,
-    // Советы требуют рассуждений — здесь размышления средние, а не минимальные
-    config: { systemInstruction: advisorInstruction(currentCurrency()), thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM }, maxOutputTokens: 8192 },
-  }));
+  const response = await withRetry(() => ai.models.generateContent(advisorRequest(context, history, question)));
   return response.text?.trim() || null;
+}
+
+/**
+ * Тот же ответ потоком: отдаёт накопленный текст по мере поступления — для «печатает на глазах» в боте.
+ * `signal` прерывает получение следующих кусков (сама генерация на стороне Gemini не останавливается).
+ */
+export async function* streamAdvisorAi(context: string, history: AdvisorTurn[], question: string, signal?: AbortSignal): AsyncGenerator<string> {
+  const ai = getClient();
+  if (!ai) return;
+  const stream = await withRetry(() => ai.models.generateContentStream(advisorRequest(context, history, question)));
+  let full = "";
+  for await (const chunk of stream) {
+    if (signal?.aborted) return;
+    if (chunk.text) {
+      full += chunk.text;
+      yield full;
+    }
+  }
 }
 
 const loansScreenshotResult = z.object({
