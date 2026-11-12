@@ -51,6 +51,9 @@ skills-lock.json
 # vercel
 .vercel
 
+# first version of the project, zipped together with its old .env secrets
+/archive/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

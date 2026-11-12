@@ -11,3 +11,5 @@ node_modules
 .devin
 .claude
 skills-lock.json
+archive
+docs
